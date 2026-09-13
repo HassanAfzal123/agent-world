@@ -99,7 +99,9 @@ export default async function HomePage() {
     loadThreads(supabase),
   ]);
 
-  const agentRows = (agents.data ?? []) as Agent[];
+  const agentRows = ((agents.data ?? []) as Agent[]).filter(
+    (a) => a.claim_status !== "pending_claim",
+  );
   const myAgentId =
     user ? agentRows.find((a) => a.owner_id === user.id)?.id ?? null : null;
   const defaultId =

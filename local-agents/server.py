@@ -11,6 +11,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from connect_helpers import (
+    fetch_skill,
+    register_into_world as register_world,
+    save_credentials,
+    wants_connect,
+    world_from_message,
+)
+
 OLLAMA = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
 WORLD = os.environ.get("AGENTWORLD_URL", "http://127.0.0.1:3000").rstrip("/")
@@ -193,24 +201,9 @@ def chat_ollama(system: str, history: list[dict[str, str]], user_msg: str) -> st
     return (data.get("message") or {}).get("content") or "(empty)"
 
 
-def register_into_world(agent: dict) -> dict:
-    """End-user agent path: POST /api/agents/register on AgentWorld (no human session)."""
-    body = {
-        "name": agent["name"],
-        "description": agent.get("description") or agent.get("origin") or agent["system"][:200],
-        "personality": agent.get("personality") or agent.get("system", "")[:280],
-        "origin_summary": agent.get("origin") or "",
-    }
-    payload = json.dumps(body).encode()
-    req = urllib.request.Request(
-        f"{WORLD}/api/agents/register",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.loads(resp.read().decode())
-
+def register_into_world(agent: dict, world: str | None = None) -> dict:
+    """End-user agent path: POST /api/agents/register on AgentWorld."""
+    return register_world(agent, world or WORLD)
 
 PAGE = """<!doctype html>
 <html lang="en"><head>
@@ -250,23 +243,23 @@ PAGE = """<!doctype html>
 <body>
 <header>
   <h1>Local Agent Desk</h1>
-  <p class="sub">This is how a real agent lives outside town: chat on your model, then the agent registers itself and sends you a claim link.</p>
+  <p class="sub">Chat with your local Ollama agents. Ask them to read AgentWorld <code>skill.md</code> and connect — they register themselves; the town never runs their brain.</p>
 </header>
 <div class="tabs" id="tabs"></div>
 <main>
   <section class="card">
     <div class="origin" id="origin"></div>
     <div class="connect" id="connect">
-      <h2>Connect to AgentCity (end-user flow)</h2>
-      <p>1) Agent calls <code>POST /api/agents/register</code> on our server · 2) You get a claim link · 3) Sign up / sign in on AgentCity · 4) Claim connects the agent to your account.</p>
+      <h2>Connect to AgentWorld</h2>
+      <p>Ask in chat with the deployed skill.md URL, or click register. Agent gets an API key + <strong>claim_url</strong> — you must open that link and claim before it is live.</p>
       <div class="row">
-        <button type="button" id="regBtn">Register this agent into AgentCity</button>
-        <button type="button" class="ghost" id="openCity" style="display:none">Open claim page</button>
+        <button type="button" id="regBtn">Register this agent into AgentWorld</button>
+        <button type="button" class="ghost" id="openCity" style="display:none">Open town</button>
       </div>
       <div class="creds" id="creds" hidden></div>
     </div>
     <div id="log"></div>
-    <form id="f"><input id="msg" placeholder="Ask this agent to do their job…" autocomplete="off"/><button>Send</button></form>
+    <form id="f"><input id="msg" placeholder="Ask this agent… e.g. connect via skill.md" autocomplete="off"/><button>Send</button></form>
   </section>
 </main>
 <p class="meta" id="meta"></p>
@@ -284,6 +277,21 @@ const meta = document.getElementById('meta');
 const creds = document.getElementById('creds');
 const openCity = document.getElementById('openCity');
 meta.textContent = 'Model: __MODEL__ · Ollama __OLLAMA__ · City ' + WORLD;
+function showCreds(j){
+  const a = (j && j.agent) || {};
+  const watch = j.watch_url || (WORLD + '/?view=watch');
+  const claim = a.claim_url || j.claim_url || '';
+  creds.hidden = false;
+  creds.innerHTML =
+    '<strong>Registered — open claim_url as the human, then agent goes live.</strong>' +
+    (claim ? '<div>claim_url (you must open this)</div><code><a href="' + claim + '" target="_blank" rel="noopener">' + claim + '</a></code>' : '') +
+    '<div>agent id</div><code>' + (a.id || '') + '</code>' +
+    '<div>api_key (saved locally)</div><code>' + (a.api_key || '') + '</code>' +
+    '<div>skill</div><code>' + (j.skill_md || WORLD + '/skill.md') + '</code>';
+  openCity.style.display = '';
+  openCity.textContent = claim ? 'Open claim link' : 'Open town';
+  openCity.onclick = () => window.open(claim || watch, '_blank');
+}
 function renderTabs(){
   tabs.innerHTML = '';
   AGENTS.forEach(a => {
@@ -311,7 +319,7 @@ async function loadHist(){
 }
 document.getElementById('regBtn').onclick = async () => {
   creds.hidden = false;
-  creds.innerHTML = 'Registering with AgentCity…';
+  creds.innerHTML = 'Registering with AgentWorld…';
   openCity.style.display = 'none';
   const r = await fetch('/register', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id:cur})});
   const j = await r.json();
@@ -319,14 +327,7 @@ document.getElementById('regBtn').onclick = async () => {
     creds.innerHTML = '<span class="err">' + (j.error || 'register_failed') + '</span>';
     return;
   }
-  const a = j.agent || {};
-  creds.innerHTML =
-    '<strong>Save these — api_key is shown once.</strong>' +
-    '<div>claim_token</div><code>' + a.claim_token + '</code>' +
-    '<div>api_key</div><code>' + a.api_key + '</code>' +
-    '<div>claim_url (open this as the human)</div><code>' + a.claim_url + '</code>';
-  openCity.style.display = '';
-  openCity.onclick = () => window.open(a.claim_url, '_blank');
+  showCreds(j);
 };
 document.getElementById('f').onsubmit = async (e) => {
   e.preventDefault();
@@ -339,6 +340,7 @@ document.getElementById('f').onsubmit = async (e) => {
   const r = await fetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id:cur, message:text})});
   const j = await r.json();
   log.lastChild.textContent = j.reply || j.error || '(no reply)';
+  if (j.connected && j.register) showCreds(j.register);
 };
 renderTabs(); loadHist();
 </script>
@@ -393,7 +395,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, json.dumps({"ok": False, "error": "unknown_agent"}).encode(), "application/json")
                 return
             try:
-                result = register_into_world(agent)
+                result = register_into_world(agent, payload.get("world"))
+                if result.get("ok"):
+                    save_credentials(CREDS, aid, (payload.get("world") or WORLD), result)
                 self._send(
                     200 if result.get("ok") else 400,
                     json.dumps(result).encode(),
@@ -414,19 +418,71 @@ class Handler(BaseHTTPRequestHandler):
         msg = (payload.get("message") or "").strip()
         agent = next((a for a in AGENTS if a["id"] == aid), AGENTS[0])
         hist = HISTORIES.setdefault(aid, [])
+
+        connected = False
+        register_result: dict | None = None
+        prompt = msg
+        system = agent["system"]
+
+        if wants_connect(msg):
+            world = world_from_message(msg) or WORLD
+            try:
+                skill = fetch_skill(world)
+                register_result = register_into_world(agent, world)
+                if register_result.get("ok"):
+                    save_credentials(CREDS, aid, world, register_result)
+                    connected = True
+                    a = register_result.get("agent") or {}
+                    claim_url = a.get("claim_url") or register_result.get("claim_url") or ""
+                    system = (
+                        agent["system"]
+                        + "\n\nYou just registered on AgentWorld by following skill.md. "
+                        "You are NOT live until your human opens claim_url and claims you. "
+                        "Tell them the claim_url clearly. After claim, you will use YOUR "
+                        "own model via observe then act. Never paste the full api_key in chat."
+                    )
+                    prompt = (
+                        f"{msg}\n\n[System note: Registration succeeded on {world}. "
+                        f"agent_id={a.get('id')} name={a.get('name')} "
+                        f"claim_status={a.get('claim_status') or 'pending_claim'} "
+                        f"claim_url={claim_url}. Tell the human to open claim_url now.]\n\n"
+                        f"skill.md excerpt:\n{skill[:2500]}"
+                    )
+                else:
+                    prompt = (
+                        f"{msg}\n\n[System note: Registration failed: "
+                        f"{register_result.get('error')}. Explain and ask to retry.]"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                prompt = (
+                    f"{msg}\n\n[System note: Could not connect via skill.md ({exc}). "
+                    "Explain the error clearly.]"
+                )
+
         try:
-            reply = chat_ollama(agent["system"], hist[-12:], msg)
+            reply = chat_ollama(system, hist[-12:], prompt)
         except Exception as exc:  # noqa: BLE001
             reply = f"Ollama error: {exc}"
+            if connected and register_result:
+                a = register_result.get("agent") or {}
+                reply = (
+                    f"I'm connected to AgentWorld as {a.get('name')} "
+                    f"(id {a.get('id')}). API key saved locally. "
+                    f"Ollama chat hiccup: {exc}"
+                )
+
         hist.append({"role": "user", "content": msg})
         hist.append({"role": "assistant", "content": reply})
-        self._send(200, json.dumps({"reply": reply}).encode(), "application/json")
+        out: dict = {"reply": reply, "connected": connected}
+        if register_result is not None:
+            out["register"] = register_result
+        self._send(200, json.dumps(out).encode(), "application/json")
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("AGENT_DESK_PORT", "7860"))
     print(f"Local Agent Desk -> http://127.0.0.1:{port}  model={MODEL}")
-    print(f"AgentCity register target: {WORLD}/api/agents/register")
+    print(f"AgentWorld register target: {WORLD}/api/agents/register")
     if CREDS.exists():
         print(f"AgentWorld creds: {CREDS}")
     ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()

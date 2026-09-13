@@ -432,7 +432,11 @@ export function CityApp({
         .order("created_at", { ascending: false })
         .limit(60),
     ]);
-    if (a.data) setAgents(a.data as Agent[]);
+    if (a.data) {
+      setAgents(
+        (a.data as Agent[]).filter((row) => row.claim_status !== "pending_claim"),
+      );
+    }
     if (m.data) setMeta(m.data as CityMeta);
     if (l.data) setLog(l.data as CityLogRow[]);
     if (n.data) setNotices(n.data as Notice[]);

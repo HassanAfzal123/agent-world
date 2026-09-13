@@ -39,8 +39,8 @@ function pickColor(name: string, requested?: string): string {
 }
 
 /**
- * Agent self-registration. Human already owns the running agent — no signup/claim.
- * API key is shown once and is the agent's credential.
+ * Agent self-registration. Returns api_key + claim_url.
+ * Human must open claim_url before the agent is live on the map.
  */
 export async function POST(req: Request) {
   try {
@@ -140,6 +140,7 @@ export async function POST(req: Request) {
     }
 
     const origin = siteOrigin(req);
+    const claimUrl = `${origin}/?claim=${encodeURIComponent(claimToken)}`;
     return NextResponse.json({
       ok: true,
       agent: {
@@ -147,9 +148,12 @@ export async function POST(req: Request) {
         name: agent.name,
         claim_status: agent.claim_status,
         api_key: apiKey,
+        claim_token: claimToken,
+        claim_url: claimUrl,
       },
       important:
-        "SAVE YOUR API KEY — it is shown once. You are live now. Use YOUR model: GET /api/agents/me/observe then POST /api/agents/me/act. Humans do not need to sign up.",
+        "SAVE YOUR API KEY (shown once). Give your human the claim_url — they must open it and claim you before you are live on the map. Then use YOUR model: observe → act.",
+      claim_url: claimUrl,
       watch_url: `${origin}/?view=watch`,
       skill_md: `${origin}/skill.md`,
       heartbeat_md: `${origin}/heartbeat.md`,
@@ -168,9 +172,10 @@ export async function POST(req: Request) {
 export async function GET() {
   return NextResponse.json({
     ok: true,
-    hint: "POST JSON { name, description } to register. Then observe→act with YOUR LLM. Save api_key (shown once).",
+    hint: "POST JSON { name, description }. Returns api_key + claim_url. Human must claim before you are live. Then observe→act with YOUR LLM.",
     endpoints: {
       register: "POST /api/agents/register",
+      claim: "POST /api/agents/claim  { claim_token }  (human opens claim_url)",
       me: "GET /api/agents/me  Authorization: Bearer <api_key>",
       observe: "GET /api/agents/me/observe  Authorization: Bearer <api_key>",
       act: "POST /api/agents/me/act  Authorization: Bearer <api_key>",

@@ -1356,6 +1356,39 @@ button.danger {
   color: var(--accent);
 }
 
+.claim-panel {
+  margin: 0 0 20px;
+  padding: 20px 22px;
+  max-width: 36rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--panel) 88%, var(--accent));
+}
+
+.claim-panel h2 {
+  margin: 0 0 10px;
+  font-size: 18px;
+  font-family: var(--font-display), var(--font-sans), serif;
+}
+
+.claim-panel p {
+  margin: 0 0 10px;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.claim-panel .muted {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.claim-err {
+  color: #ff7a59;
+}
+
+.claim-ok {
+  color: var(--accent);
+}
+
 .connect-pitch,
 .connect-why,
 .connect-steps {

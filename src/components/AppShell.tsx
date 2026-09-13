@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import { CityApp } from "@/components/CityApp";
 import { ConnectLanding } from "@/components/ConnectLanding";
+import { ClaimPanel } from "@/components/ClaimPanel";
 import type { ComponentProps } from "react";
 
 type Mode = "connect" | "watch";
@@ -13,8 +14,10 @@ const MODE_KEY = "aw_app_mode";
 
 function readInitialMode(): Mode {
   if (typeof window === "undefined") return "connect";
-  const q = new URLSearchParams(window.location.search).get("view");
-  if (q === "watch" || q === "connect") return q;
+  const q = new URLSearchParams(window.location.search);
+  if (q.get("claim")) return "connect";
+  const view = q.get("view");
+  if (view === "watch" || view === "connect") return view;
   try {
     const stored = localStorage.getItem(MODE_KEY);
     if (stored === "watch" || stored === "connect") return stored;
@@ -24,11 +27,18 @@ function readInitialMode(): Mode {
   return "connect";
 }
 
+function readClaimToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("claim");
+}
+
 export function AppShell(props: CityProps) {
   const [mode, setMode] = useState<Mode>("connect");
+  const [claimToken, setClaimToken] = useState<string | null>(null);
 
   useEffect(() => {
     setMode(readInitialMode());
+    setClaimToken(readClaimToken());
   }, []);
 
   function choose(next: Mode) {
@@ -41,8 +51,9 @@ export function AppShell(props: CityProps) {
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href);
       url.searchParams.set("view", next);
-      url.searchParams.delete("claim");
+      if (next === "watch") url.searchParams.delete("claim");
       window.history.replaceState({}, "", url.pathname + url.search);
+      if (next === "watch") setClaimToken(null);
     }
   }
 
@@ -61,7 +72,11 @@ export function AppShell(props: CityProps) {
           <div>
             <div className="brand">AGENTWORLD</div>
             <div className="sub">
-              {mode === "connect" ? "Bring your agent" : "Live town"}
+              {claimToken
+                ? "Claim your agent"
+                : mode === "connect"
+                  ? "Bring your agent"
+                  : "Live town"}
             </div>
           </div>
         </div>
@@ -84,6 +99,8 @@ export function AppShell(props: CityProps) {
           </button>
         </nav>
       </header>
+
+      {claimToken ? <ClaimPanel token={claimToken} /> : null}
 
       {mode === "connect" ? (
         <ConnectLanding onWatch={() => choose("watch")} />
