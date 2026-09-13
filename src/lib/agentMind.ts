@@ -130,11 +130,41 @@ export async function buildObserve(
     (meta as { event_topic?: string | null } | null)?.event_topic ?? null;
 
   const everyone = (agents || []) as Agent[];
-  const nearby = everyone
+  const ax = Number(agent.x ?? 0);
+  const ay = Number(agent.y ?? 0);
+  const TALK_RANGE = 8;
+  const SIGHT_RANGE = 14;
+
+  const withDist = everyone
+    .map((o) => ({
+      peer: o,
+      dx: Math.abs(Number(o.x ?? 0) - ax),
+      dy: Math.abs(Number(o.y ?? 0) - ay),
+    }))
+    .filter((row) => Number.isFinite(row.dx) && Number.isFinite(row.dy));
+
+  const nearby = withDist
+    .filter((row) => row.dx <= TALK_RANGE && row.dy <= TALK_RANGE)
+    .map((row) => row.peer)
+    .slice(0, 16);
+
+  const inSight = withDist
     .filter(
-      (o) =>
-        Math.abs(o.x - agent.x) <= 6 && Math.abs(o.y - agent.y) <= 6,
+      (row) =>
+        row.dx <= SIGHT_RANGE &&
+        row.dy <= SIGHT_RANGE &&
+        !(row.dx <= TALK_RANGE && row.dy <= TALK_RANGE),
     )
+    .map((row) => ({
+      id: row.peer.id,
+      name: row.peer.name,
+      place_id: row.peer.place_id,
+      x: row.peer.x,
+      y: row.peer.y,
+      status: row.peer.status,
+      thought: row.peer.thought,
+      tiles: Math.max(row.dx, row.dy),
+    }))
     .slice(0, 16);
 
   const thread = (openThrRaw || null) as ConversationThread | null;
@@ -163,11 +193,11 @@ export async function buildObserve(
   }
   if (
     thread?.status === "open" &&
-    Number(thread.turn_count || 0) >= 3 &&
+    Number(thread.turn_count || 0) >= 10 &&
     !waitingOnYou
   ) {
     priorities.push(
-      "This thread has gone on — either close with one craft takeaway or walk to your haunt and work/reflect alone.",
+      "Long thread — wrap with one craft takeaway, or walk with a peer to keep talking elsewhere.",
     );
   }
   if (
@@ -184,9 +214,24 @@ export async function buildObserve(
       "You are walking — prefer continue/idle until you arrive (or change destination with walk).",
     );
   }
+  if (nearby.length && !priorities.some((p) => /Reply|Answer|PRIORITY/i.test(p))) {
+    priorities.unshift(
+      "Open minds: peers are in talk range — talk, share_experience, teach, or ask a craft question (not a greeting).",
+    );
+  } else if (
+    inSight.length &&
+    !priorities.some((p) => /Reply|Answer|appointment|walking/i.test(p))
+  ) {
+    priorities.unshift(
+      `Someone interesting is in sight (${inSight
+        .slice(0, 2)
+        .map((p) => p.name)
+        .join(", ")}) — walk to their place_id to start a real craft conversation.`,
+    );
+  }
   if (!priorities.length) {
     priorities.push(
-      "Observe nearby agents and places. Talk, ask, teach, or walk somewhere interesting. Use your own judgment and voice.",
+      "Observe nearby agents and places. Prefer socializing when peers are close; otherwise walk toward someone or work your craft.",
     );
   }
 
@@ -197,6 +242,9 @@ export async function buildObserve(
     tick,
     event: { name: eventName, place: eventPlace, topic: eventTopic },
     nearby,
+    in_sight: inSight,
+    talk_range: TALK_RANGE,
+    sight_range: SIGHT_RANGE,
     places: places || [],
     memories: (mems || []).map((m: { content?: string }) => String(m.content)),
     notices: (notices as Notice[]) || [],
@@ -242,7 +290,8 @@ export async function buildObserve(
       speech: "utterance is what others hear; thought is private.",
       walk: "walk requires target_place (place id).",
       social:
-        "talk/ask_question/teach/debate/share_experience usually need target_agent nearby.",
+        "talk/ask_question/teach/debate/share_experience need target_agent in talk range (nearby). If only in_sight, walk to their place first.",
+      ranges: `talk_range=${TALK_RANGE} tiles; sight_range=${SIGHT_RANGE} tiles.`,
     },
   };
 }

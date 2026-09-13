@@ -62,7 +62,7 @@ type Props = {
 };
 
 type CastTab = "hot" | "mine" | "following" | "place";
-type SideTab = "threads" | "agent" | "watch";
+type SideTab = "threads" | "agent" | "thinking" | "watch";
 
 const THREAD_PAGE = 40;
 
@@ -290,6 +290,17 @@ export function CityApp({
   }
 
   const selected = agents.find((a) => a.id === selectedId) ?? null;
+  const nearbyPeersForSelected = useMemo(() => {
+    if (!selected) return [] as Agent[];
+    const sx = Number(selected.x ?? 0);
+    const sy = Number(selected.y ?? 0);
+    return agents.filter((o) => {
+      if (o.id === selected.id) return false;
+      const dx = Math.abs(Number(o.x ?? 0) - sx);
+      const dy = Math.abs(Number(o.y ?? 0) - sy);
+      return dx <= 8 && dy <= 8;
+    });
+  }, [agents, selected]);
   const selectedLessons = lessons.filter((l) => l.learner_id === selectedId).slice(0, 6);
   const selectedRels = relationships.filter((r) => r.agent_id === selectedId);
   const selectedJournal = journal.filter((j) => j.agent_id === selectedId).slice(0, 8);
@@ -976,6 +987,7 @@ export function CityApp({
               [
                 ["threads", "Threads"],
                 ["agent", "Agent"],
+                ["thinking", "Thinking"],
                 ["watch", "Watch"],
               ] as const
             ).map(([id, label]) => (
@@ -1379,6 +1391,103 @@ export function CityApp({
               <p className="muted">Pick a cast card above or click someone on the map.</p>
             )}
           </div>
+          ) : null}
+
+          {sideTab === "thinking" ? (
+            <div className="card agent-panel thinking-panel">
+              {selected ? (
+                <>
+                  <div className="agent-panel-head">
+                    <h2>{selected.name}&apos;s thinking</h2>
+                    <span className="muted tiny">
+                      Open minds — private thoughts + social intent
+                    </span>
+                  </div>
+
+                  <div className="story-block thinking-now">
+                    <span>Thinking now</span>
+                    <p className="thinking-quote">
+                      {selected.thought?.trim() || "Quiet mind — waiting on the next beat."}
+                    </p>
+                  </div>
+
+                  <div className="story-block">
+                    <span>Social intent</span>
+                    <p>
+                      {selected.status === "talking"
+                        ? `In conversation — last action ${selected.last_action || "talk"}.`
+                        : selected.status === "walking" && selected.target_place_id
+                          ? `Moving toward ${placeName(selected.target_place_id)} — likely seeking a peer or place to exchange methods.`
+                          : selected.commit_action === "dialogue"
+                            ? `Staying with a thread: ${selected.commit_detail || "in dialogue"}.`
+                            : nearbyPeersForSelected.length
+                              ? `Peers in range: ${nearbyPeersForSelected
+                                  .map((p) => p.name)
+                                  .join(", ")} — good moment to share craft.`
+                              : "No one right next to them — they may walk toward someone interesting."}
+                    </p>
+                    {selected.pending_answer_question ? (
+                      <p className="muted tiny">
+                        Pending answer about “{selected.pending_answer_question}”
+                        {selected.pending_answer_to
+                          ? ` for ${
+                              agents.find((a) => a.id === selected.pending_answer_to)
+                                ?.name || "a peer"
+                            }`
+                          : ""}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div className="story-block">
+                    <span>Mindset</span>
+                    <p>{selected.mindset || "Still forming in town"}</p>
+                  </div>
+
+                  <div className="story-block">
+                    <span>Aim / goal</span>
+                    <p>{selected.goal || "—"}</p>
+                  </div>
+
+                  <div className="story-block">
+                    <span>Commitment</span>
+                    <p>
+                      {(selected.commit_ticks ?? 0) > 0
+                        ? `${selected.commit_action} — ${selected.commit_detail || "in progress"} (${selected.commit_ticks} ticks)`
+                        : "Free for a fresh beat"}
+                    </p>
+                  </div>
+
+                  {selectedJournal.length ? (
+                    <div className="story-block">
+                      <span>Recent inner beats</span>
+                      <ul className="mini-list">
+                        {selectedJournal.slice(0, 6).map((j) => (
+                          <li key={j.id}>
+                            <em>{journalKindLabel[j.kind] || j.kind}</em>
+                            {j.title ? ` · ${j.title}` : ""} — {j.body}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
+                    <p className="muted tiny">No journal beats yet for this agent.</p>
+                  )}
+
+                  <button
+                    type="button"
+                    className="linkish"
+                    onClick={() => setSideTab("agent")}
+                  >
+                    Open full Agent profile →
+                  </button>
+                </>
+              ) : (
+                <p className="muted">
+                  Select someone on the map or cast strip to read their thinking.
+                </p>
+              )}
+            </div>
           ) : null}
 
           {sideTab === "watch" ? (

@@ -817,16 +817,29 @@ button.danger {
   border: 0;
   background: transparent;
   color: var(--muted);
-  padding: 8px 10px;
+  padding: 8px 6px;
   cursor: pointer;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .side-tab.on {
   color: var(--accent);
   background: #0b1218;
+}
+
+.thinking-panel .thinking-now {
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+}
+
+.thinking-quote {
+  font-family: var(--font-display), var(--font-sans), serif;
+  font-size: 17px;
+  line-height: 1.45;
+  margin: 6px 0 0;
+  color: var(--text);
 }
 
 .side > .card {
