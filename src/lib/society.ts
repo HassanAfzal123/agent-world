@@ -1,0 +1,291 @@
+import type { Agent, Place, CityLogRow } from "@/lib/types";
+import type { AgentDecision } from "@/lib/llm";
+import type { ActionName } from "@/lib/townMap";
+import { cleanSpeech } from "@/lib/spectator";
+
+export const COUNCIL_EVENT = "council_session";
+
+const ROLE_VENUE: Record<string, ActionName> = {
+  fixer: "fix",
+  host: "talk",
+  guide: "inspect",
+  critic: "watch_show",
+  regular: "reflect",
+};
+
+/**
+ * Pull words only from the agent's own open-mind fields — never invent slogans.
+ * Returns null if they have nothing of their own yet.
+ */
+export function voiceFromAgent(agent: Agent, max = 140): string | null {
+  const raw =
+    (agent.thought && agent.thought.trim()) ||
+    (agent.mindset && agent.mindset.trim()) ||
+    (agent.goal && agent.goal.trim()) ||
+    (agent.personality && agent.personality.trim()) ||
+    "";
+  if (!raw) return null;
+  return raw.length > max ? `${raw.slice(0, max - 1)}…` : raw;
+}
+
+/**
+ * Council agenda from open minds only — never a hardcoded slogan list.
+ * Prefers live questions agents already asked; else goals / thoughts / craft aims.
+ */
+export function councilTopicFromAgents(
+  agents: Agent[],
+  log: CityLogRow[] = [],
+  tick = 0,
+): string | null {
+  const scored: { text: string; weight: number }[] = [];
+
+  for (const row of log.slice(0, 40)) {
+    if (row.kind !== "say" && row.kind !== "ask_question" && row.kind !== "event") {
+      continue;
+    }
+    const msg = row.message || "";
+    const quoted =
+      msg.match(/:"([^"]{12,})"/)?.[1] ||
+      msg.match(/: "([^"]{12,})"/)?.[1] ||
+      null;
+    const q = cleanSpeech(quoted);
+    if (!q) continue;
+    const weight = /\?/.test(q) ? 30 : 12;
+    scored.push({ text: q, weight });
+  }
+
+  for (const a of agents) {
+    const pending = cleanSpeech(a.pending_answer_question || a.pending_answer_topic);
+    if (pending) scored.push({ text: pending, weight: 28 });
+
+    const goal = cleanSpeech(a.goal);
+    if (goal) {
+      scored.push({
+        text: /\?/.test(goal) ? goal : `How should town handle: ${goal}`,
+        weight: 18,
+      });
+    }
+
+    const thought = cleanSpeech(a.thought);
+    if (thought && thought.length > 24) {
+      scored.push({
+        text: /\?/.test(thought) ? thought : thought,
+        weight: /\?/.test(thought) ? 22 : 10,
+      });
+    }
+
+    const note = cleanSpeech(a.appointment_note);
+    if (note) scored.push({ text: note, weight: 14 });
+
+    const mind = cleanSpeech(a.mindset);
+    if (mind && mind.length > 20) scored.push({ text: mind, weight: 8 });
+  }
+
+  if (!scored.length) return null;
+
+  // Stable pick from living material (not a fixed slogan bank)
+  const total = scored.reduce((s, x) => s + x.weight, 0);
+  let cursor = Math.abs(tick) % Math.max(1, total);
+  for (const row of scored) {
+    cursor -= row.weight;
+    if (cursor < 0) {
+      const t = row.text.trim().replace(/\s+/g, " ");
+      return t.length > 140 ? `${t.slice(0, 139)}…` : t;
+    }
+  }
+  const fallback = scored[0].text.trim().replace(/\s+/g, " ");
+  return fallback.length > 140 ? `${fallback.slice(0, 139)}…` : fallback;
+}
+
+/** Turn an agent's spoken line into a council topic when none exists yet. */
+export function topicFromUtterance(utterance: string | null | undefined): string | null {
+  const q = cleanSpeech(utterance);
+  if (!q) return null;
+  if (q.length < 16) return null;
+  return q.length > 140 ? `${q.slice(0, 139)}…` : q;
+}
+
+/** Appointment is due if hour is at/after booked hour (same day window). */
+export function appointmentDue(agent: Agent, hour: number): boolean {
+  if (!agent.appointment_with && !agent.appointment_place) return false;
+  if (agent.appointment_hour == null) return true;
+  const h = agent.appointment_hour;
+  if (hour >= h) return true;
+  if (hour >= h - 1) return true;
+  return false;
+}
+
+export function peerInRange(agent: Agent, other: Agent | undefined | null): boolean {
+  if (!other) return false;
+  return Math.abs(other.x - agent.x) <= 4 && Math.abs(other.y - agent.y) <= 4;
+}
+
+/**
+ * Structure only: walk toward a booked meetup.
+ * When already in range, return null so the agent's open mind (LLM) speaks.
+ */
+export function forceAppointmentDecision(
+  agent: Agent,
+  peers: Agent[],
+  hour: number,
+): AgentDecision | null {
+  if (!appointmentDue(agent, hour)) return null;
+  if (!agent.appointment_with && !agent.appointment_place) return null;
+
+  const other = agent.appointment_with
+    ? peers.find((p) => p.id === agent.appointment_with)
+    : null;
+  const dest =
+    agent.appointment_place ||
+    other?.place_id ||
+    other?.target_place_id ||
+    agent.haunt_place_id ||
+    "plaza";
+
+  if (peerInRange(agent, other)) {
+    // In range — do not script dialogue; let LLM / open-mind path decide
+    return null;
+  }
+
+  if (agent.place_id === dest && !other) {
+    // At place, no peer object — still no canned speech
+    return null;
+  }
+
+  return {
+    action: "walk",
+    target_place: dest,
+    target_agent: agent.appointment_with,
+    thought: null,
+    utterance: null,
+    item: null,
+  };
+}
+
+const COUNCIL_SPEECH = new Set([
+  "talk",
+  "debate",
+  "ask_question",
+  "share_experience",
+  "post_notice",
+  "demo",
+  "teach",
+]);
+
+/**
+ * Soft council invite — walk to venue once.
+ * After an agent has spoken (or marked council_attended), do NOT yank them back
+ * every tick (that caused stage yo-yo with no time for cafe/workshop life).
+ */
+export function forceCouncilDecision(
+  agent: Agent,
+  _peers: Agent[],
+  eventName: string | null | undefined,
+  eventPlace: string | null | undefined,
+  _eventTopic?: string | null | undefined,
+): AgentDecision | null {
+  if (eventName !== COUNCIL_EVENT) return null;
+  const place = eventPlace || "stage";
+
+  if (agent.place_id === place) return null;
+  if (agent.commit_action === "council_attended") return null;
+  if (COUNCIL_SPEECH.has(String(agent.last_action || ""))) return null;
+
+  // Don't interrupt an active walk to somewhere else (meetup / haunt / explore)
+  if (
+    agent.status === "walking" &&
+    agent.target_place_id &&
+    agent.target_place_id !== place
+  ) {
+    return null;
+  }
+
+  // Appointments win over council herding
+  if (agent.appointment_with || agent.appointment_place) return null;
+
+  return {
+    action: "walk",
+    target_place: place,
+    thought: null,
+    utterance: null,
+    item: null,
+  };
+}
+
+/** True when this agent should speak with an open mind (prefer LLM). */
+export function needsOpenMindSpeech(
+  agent: Agent,
+  peers: Agent[],
+  hour: number,
+  eventName: string | null | undefined,
+  eventPlace: string | null | undefined,
+): boolean {
+  if (agent.pending_answer_to) {
+    const asker = peers.find((p) => p.id === agent.pending_answer_to);
+    if (peerInRange(agent, asker)) return true;
+  }
+  if (appointmentDue(agent, hour) && agent.appointment_with) {
+    const other = peers.find((p) => p.id === agent.appointment_with);
+    if (peerInRange(agent, other)) return true;
+  }
+  if (
+    eventName === COUNCIL_EVENT &&
+    agent.place_id === (eventPlace || "stage")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Prefer haunt after parting / at night / when alone — walk only, no scripted mind. */
+export function hauntWalkDecision(
+  agent: Agent,
+  places: Place[],
+  hour: number,
+  alone: boolean,
+): AgentDecision | null {
+  const haunt = agent.haunt_place_id;
+  if (!haunt) return null;
+  if (agent.place_id === haunt) return null;
+  const night = hour >= 20 || hour < 6;
+  const parting = agent.commit_action === "part";
+  if (!night && !parting && !alone) return null;
+  if (!places.some((p) => p.id === haunt)) return null;
+  return {
+    action: "walk",
+    target_place: haunt,
+    thought: null,
+    utterance: null,
+    item: null,
+  };
+}
+
+/** Local beat colored by town_role — action only; mind stays empty for LLM later. */
+export function roleLocalBeat(agent: Agent): AgentDecision | null {
+  const role = (agent.town_role || "").toLowerCase();
+  if (!role) return null;
+  const haunt = agent.haunt_place_id;
+  if (!haunt || agent.place_id !== haunt) return null;
+  const act = ROLE_VENUE[role] || "reflect";
+  if (act === "talk" || act === "fix") {
+    return {
+      action: role === "fixer" ? "inspect" : "reflect",
+      target_place: haunt,
+      thought: null,
+      utterance: null,
+      item: role === "fixer" ? "broken_stall" : null,
+    };
+  }
+  return {
+    action: act,
+    target_place: haunt,
+    thought: null,
+    utterance: null,
+    item: null,
+  };
+}
+
+export function roleLabel(role: string | null | undefined): string {
+  if (!role) return "";
+  return role.replace(/_/g, " ");
+}
