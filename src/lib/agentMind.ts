@@ -9,7 +9,6 @@ import {
   nextCommitment,
 } from "@/lib/commitment";
 import {
-  isDialogueLocked,
   isRepeatThreadLine,
   type ConversationThread,
 } from "@/lib/conversation";
