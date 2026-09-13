@@ -3,8 +3,6 @@ import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { decideAgentTurn, llmConfigured, llmProviderFlags, type AgentDecision } from "@/lib/llm";
 
-export const dynamic = "force-dynamic";
-export const maxDuration = 60;
 import {
   breakSoloActionLoop,
   breakTopicLoop,
@@ -59,6 +57,7 @@ import { allowSimCall, isCronAuthorized } from "@/lib/simGuard";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 function service() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -96,11 +95,16 @@ async function db() {
 }
 
 export async function GET(req: Request) {
-  // Vercel Cron invokes GET. Require cron auth (CRON_SECRET or vercel-cron UA).
-  if (!isCronAuthorized(req)) {
-    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  // Vercel Cron invokes GET. Authorized cron runs the tick; browsers get health.
+  if (isCronAuthorized(req)) {
+    return POST(req);
   }
-  return POST(req);
+  return NextResponse.json({
+    ok: true,
+    llm: llmConfigured(),
+    supabaseUrl: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
+    providers: llmProviderFlags(),
+  });
 }
 
 export async function POST(req: Request) {
@@ -1203,13 +1207,4 @@ export async function POST(req: Request) {
       { status: 500 },
     );
   }
-}
-
-export async function GET() {
-  return NextResponse.json({
-    ok: true,
-    llm: llmConfigured(),
-    supabaseUrl: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
-    providers: llmProviderFlags(),
-  });
 }
