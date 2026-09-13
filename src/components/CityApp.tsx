@@ -667,7 +667,7 @@ export function CityApp({
             <span className="pill event">
               {meta.event_name.replace(/_/g, " ")}
               {meta.event_topic
-                ? ` · ${meta.event_topic.slice(0, 36)}${meta.event_topic.length > 36 ? "…" : ""}`
+                ? ` · ${meta.event_topic.slice(0, 120)}${meta.event_topic.length > 120 ? "…" : ""}`
                 : ""}
             </span>
           ) : null}
@@ -687,7 +687,7 @@ export function CityApp({
               <span className="pill event">
                 {meta.event_name.replace(/_/g, " ")}
                 {meta.event_topic
-                  ? ` · ${meta.event_topic.slice(0, 36)}${meta.event_topic.length > 36 ? "…" : ""}`
+                  ? ` · ${meta.event_topic.slice(0, 120)}${meta.event_topic.length > 120 ? "…" : ""}`
                   : ""}
               </span>
             ) : null}

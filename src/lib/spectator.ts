@@ -202,7 +202,7 @@ export function townHeadline(
     const who = agents.find((a) => a.id === curious.agent_id);
     const body = cleanSpeech(curious.body);
     if (body) {
-      return `${who?.name || "Someone"}: "${body.slice(0, 100)}${body.length > 100 ? "…" : ""}"`;
+      return `${who?.name || "Someone"}: "${body.slice(0, 280)}${body.length > 280 ? "…" : ""}"`;
     }
     if (curious.headline) return curious.headline;
   }
@@ -213,7 +213,7 @@ export function townHeadline(
   if (hot && (hot.thought || hot.goal)) {
     const mind = cleanSpeech(hot.thought) || cleanSpeech(hot.goal);
     if (mind && mind.length > 12) {
-      return `${hot.name}: "${mind.slice(0, 100)}${mind.length > 100 ? "…" : ""}"`;
+      return `${hot.name}: "${mind.slice(0, 280)}${mind.length > 280 ? "…" : ""}"`;
     }
   }
 
@@ -226,7 +226,7 @@ export function townHeadline(
   }
 
   const say = log.find((l) => l.kind === "say" || l.kind === "learn");
-  if (say && !isSpeechSpam(say.message)) return say.message.slice(0, 120);
+  if (say && !isSpeechSpam(say.message)) return say.message.slice(0, 400);
 
   return "Town is between curious scenes — follow an agent or wait for debate / teach";
 }
@@ -287,9 +287,14 @@ export function isSpeechSpam(text: string | null | undefined): boolean {
 }
 
 /** Strip travel/status noise so watchers only see real words. */
+export const SPEECH_MAX = 4000;
+export const TOPIC_MAX = 500;
+/** Short map / chip bubbles only — threads use SPEECH_MAX / fullSpeech. */
+export const BUBBLE_MAX = 320;
+
 export function cleanSpeech(
   text: string | null | undefined,
-  maxLen = 280,
+  maxLen = SPEECH_MAX,
 ): string | null {
   const t = (text || "").trim();
   if (!t || isSpeechSpam(t)) return null;
@@ -509,7 +514,7 @@ export function threadFeed(opts: {
     const last = lines[lines.length - 1];
     cards.push({
       id: t.id,
-      topic: (t.topic || lines[0]?.body || "Conversation").slice(0, 140),
+      topic: (t.topic || lines[0]?.body || "Conversation").slice(0, TOPIC_MAX),
       status: t.status,
       placeId: t.place_id,
       starterId: t.starter_id,
@@ -608,7 +613,7 @@ export function ownerDigest(
     .map((m) => ({
       kind: m.kind,
       headline: m.headline,
-      body: (m.body || "").slice(0, 160),
+      body: (m.body || "").slice(0, SPEECH_MAX),
       at: m.created_at,
     }));
 }

@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ACTIONS, type ActionName } from "@/lib/townMap";
 import type { AgentDecision } from "@/lib/llm";
-import { cleanSpeech, fullSpeech } from "@/lib/spectator";
+import { cleanSpeech, fullSpeech, SPEECH_MAX, TOPIC_MAX } from "@/lib/spectator";
 import { pickMeetupPlace, placeIsBusy } from "@/lib/meetupPlaces";
 import {
   commitmentAfterArrival,
@@ -368,8 +368,8 @@ function normalizeDecision(body: ActBody): AgentDecision | { error: string } {
     action: action as AgentDecision["action"],
     target_place: body.target_place ?? null,
     target_agent: body.target_agent ?? null,
-    utterance: cleanSpeech(body.utterance, 1200) || null,
-    thought: cleanSpeech(body.thought, 1200) || body.thought || null,
+    utterance: cleanSpeech(body.utterance, SPEECH_MAX) || null,
+    thought: cleanSpeech(body.thought, SPEECH_MAX) || body.thought || null,
     item: body.item ?? null,
     plan: body.plan ?? null,
   };
@@ -609,7 +609,7 @@ export async function applyExternalDecision(
         activeThread.topic ||
         agent.commit_detail ||
         "In conversation"
-      ).slice(0, 160),
+        ).slice(0, TOPIC_MAX),
       p_commit_ticks: Math.max(3, agent.commit_ticks ?? 0),
       p_mindset: null,
     });
@@ -714,7 +714,7 @@ export async function applyExternalDecision(
     await db.rpc("write_moment", {
       p_kind: finalAction === "talk" ? "say" : finalAction,
       p_headline: headline.slice(0, 160),
-      p_body: speechBody.slice(0, 1200),
+      p_body: speechBody.slice(0, SPEECH_MAX),
       p_agent: agent.id,
       p_other: other?.id || null,
       p_place: agent.place_id,

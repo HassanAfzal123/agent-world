@@ -28,7 +28,7 @@ import {
   needsOpenMindSpeech,
   topicFromUtterance,
 } from "@/lib/society";
-import { cleanSpeech, fullSpeech } from "@/lib/spectator";
+import { cleanSpeech, fullSpeech, SPEECH_MAX, TOPIC_MAX } from "@/lib/spectator";
 import { pickMeetupPlace, placeIsBusy } from "@/lib/meetupPlaces";
 import {
   craftFreshQuestion,
@@ -581,8 +581,8 @@ export async function POST(req: Request) {
         // Never persist travel/status spam as speech — watchers need real quotes
         decision = {
           ...decision,
-          utterance: cleanSpeech(decision.utterance, 1200),
-          thought: cleanSpeech(decision.thought, 1200) || decision.thought,
+          utterance: cleanSpeech(decision.utterance, SPEECH_MAX),
+          thought: cleanSpeech(decision.thought, SPEECH_MAX) || decision.thought,
         };
 
         if (usedLlm) {
@@ -744,7 +744,7 @@ export async function POST(req: Request) {
                 decision.item ||
                 agent.pending_answer_topic ||
                 speechBody
-              ).slice(0, 140);
+              ).slice(0, TOPIC_MAX);
               const relsForPair = ((relationships as Relationship[]) || []).filter(
                 (r) =>
                   (r.agent_id === agent.id && r.other_id === socialPeer) ||
@@ -1042,7 +1042,7 @@ export async function POST(req: Request) {
             p_headline: headline.slice(0, 160),
             p_body: (decision.utterance || decision.thought || rawSpeech || "").slice(
               0,
-              800,
+              SPEECH_MAX,
             ),
             p_agent: agent.id,
             p_other: other?.id || null,

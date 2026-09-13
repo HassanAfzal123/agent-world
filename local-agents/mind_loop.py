@@ -154,7 +154,7 @@ def _addressed_line(observe: dict[str, Any]) -> dict[str, str] | None:
             return {
                 "peer_id": pid,
                 "peer_name": _peer_name_for(observe, pid),
-                "text": q[:400],
+                "text": q[:1200],
                 "source": "pending_answer",
             }
 
@@ -173,7 +173,7 @@ def _addressed_line(observe: dict[str, Any]) -> dict[str, str] | None:
         return {
             "peer_id": aid,
             "peer_name": _peer_name_for(observe, aid),
-            "text": body[:400],
+            "text": body[:1200],
             "source": "thread",
         }
     # waiting but messages lack agent_id — use last line as best effort
@@ -186,7 +186,7 @@ def _addressed_line(observe: dict[str, Any]) -> dict[str, str] | None:
             return {
                 "peer_id": other,
                 "peer_name": _peer_name_for(observe, other),
-                "text": bodies[-1][:400],
+                "text": bodies[-1][:1200],
                 "source": "thread_fallback",
             }
     return None
@@ -328,7 +328,7 @@ def _decide_direct_answer(
         utterance = parsed.get("utterance")
         thought = parsed.get("thought")
         if isinstance(utterance, str):
-            utterance = utterance.strip()[:1200] or None
+            utterance = utterance.strip()[:4000] or None
     if not utterance or _is_bad_filler(utterance) or not _grounds_on_peer(
         utterance, peer_text
     ):
@@ -337,7 +337,7 @@ def _decide_direct_answer(
             f"{peer_name}, I'm in — let's treat that as a real town next-step. "
             f"Meet me at the cafe in a bit and we'll pick one concrete action "
             f"(not another metaphor). You raised: {peer_short}."
-        )[:1200]
+        )[:4000]
         thought = f"Answering {peer_name} as a neighbor (fallback)."
     return {
         "action": "talk",
@@ -721,7 +721,7 @@ def _sanitize_decision(
 
     utterance = decision.get("utterance")
     if isinstance(utterance, str):
-        utterance = utterance.strip()[:1200] or None
+        utterance = utterance.strip()[:4000] or None
     else:
         utterance = None
 
@@ -764,7 +764,7 @@ def _sanitize_decision(
                 "utterance": (
                     f"{peer_name}, responding to '{snippet}': I hear the concrete ask — "
                     f"here is my actual position, not a new question."
-                )[:1200],
+                )[:4000],
                 "thought": "Grounded reply after empty/ungrounded speech.",
             }
         return _solo_decision(
@@ -860,7 +860,7 @@ def _sanitize_decision(
             "target_place": None,
             "target_agent": peer,
             "item": None,
-            "utterance": utterance[:1200],
+            "utterance": utterance[:4000],
             "thought": decision.get("thought") or "Speaking from my own thinking.",
         }
 
@@ -937,7 +937,7 @@ def _substantive_reply(
         "utterance": (
             f"{peer_name}, on '{q}' — holding for a real take from my own head, "
             f"not a recycled line."
-        )[:1200],
+        )[:4000],
         "thought": "Answering without a hardcoded topic.",
     }
 
@@ -1003,7 +1003,7 @@ def _slim_observe(observe: dict[str, Any]) -> dict[str, Any]:
                         (m.get("body") or m.get("content") or "")
                         if isinstance(m, dict)
                         else str(m)
-                    )[:200],
+                    )[:800],
                 }
                 for m in (thread.get("messages") or [])[-6:]
             ],
@@ -1103,7 +1103,7 @@ def decide_act(
             addressed = {
                 "peer_id": pid,
                 "peer_name": _peer_name_for(observe, pid),
-                "text": str(pending.get("question"))[:400],
+                "text": str(pending.get("question"))[:1200],
                 "source": "pending_answer",
             }
         if addressed:
