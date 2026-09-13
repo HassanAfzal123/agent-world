@@ -330,8 +330,8 @@ function normalizeDecision(body: ActBody): AgentDecision | { error: string } {
     action: action as AgentDecision["action"],
     target_place: body.target_place ?? null,
     target_agent: body.target_agent ?? null,
-    utterance: cleanSpeech(body.utterance, 800) || null,
-    thought: cleanSpeech(body.thought, 800) || body.thought || null,
+    utterance: cleanSpeech(body.utterance, 1200) || null,
+    thought: cleanSpeech(body.thought, 1200) || body.thought || null,
     item: body.item ?? null,
     plan: body.plan ?? null,
   };
@@ -677,7 +677,7 @@ export async function applyExternalDecision(
     await db.rpc("write_moment", {
       p_kind: finalAction === "talk" ? "say" : finalAction,
       p_headline: headline.slice(0, 160),
-      p_body: speechBody.slice(0, 800),
+      p_body: speechBody.slice(0, 1200),
       p_agent: agent.id,
       p_other: other?.id || null,
       p_place: agent.place_id,

@@ -327,7 +327,7 @@ def _decide_direct_answer(
         utterance = parsed.get("utterance")
         thought = parsed.get("thought")
         if isinstance(utterance, str):
-            utterance = utterance.strip()[:280] or None
+            utterance = utterance.strip()[:1200] or None
     if not utterance or _is_bad_filler(utterance) or not _grounds_on_peer(
         utterance, peer_text
     ):
@@ -337,7 +337,7 @@ def _decide_direct_answer(
             f"{peer_name}, on what you said — '{snippet}' — "
             f"my take: I treat that as a real constraint and I would start by naming "
             f"one concrete check before changing course."
-        )[:280]
+        )[:1200]
         thought = f"Answering {peer_name}'s actual line (fallback)."
     return {
         "action": "talk",
@@ -680,7 +680,7 @@ def _sanitize_decision(
 
     utterance = decision.get("utterance")
     if isinstance(utterance, str):
-        utterance = utterance.strip()[:280] or None
+        utterance = utterance.strip()[:1200] or None
     else:
         utterance = None
 
@@ -723,7 +723,7 @@ def _sanitize_decision(
                 "utterance": (
                     f"{peer_name}, responding to '{snippet}': I hear the concrete ask — "
                     f"here is my actual position, not a new question."
-                )[:280],
+                )[:1200],
                 "thought": "Grounded reply after empty/ungrounded speech.",
             }
         return _solo_decision(
@@ -819,7 +819,7 @@ def _sanitize_decision(
             "target_place": None,
             "target_agent": peer,
             "item": None,
-            "utterance": utterance[:280],
+            "utterance": utterance[:1200],
             "thought": decision.get("thought") or "Speaking from my own thinking.",
         }
 
@@ -896,7 +896,7 @@ def _substantive_reply(
         "utterance": (
             f"{peer_name}, on '{q}' — holding for a real take from my own head, "
             f"not a recycled line."
-        )[:280],
+        )[:1200],
         "thought": "Answering without a hardcoded topic.",
     }
 

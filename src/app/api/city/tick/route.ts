@@ -566,8 +566,8 @@ export async function POST(req: Request) {
         // Never persist travel/status spam as speech — watchers need real quotes
         decision = {
           ...decision,
-          utterance: cleanSpeech(decision.utterance, 800),
-          thought: cleanSpeech(decision.thought, 800) || decision.thought,
+          utterance: cleanSpeech(decision.utterance, 1200),
+          thought: cleanSpeech(decision.thought, 1200) || decision.thought,
         };
 
         if (usedLlm) {
