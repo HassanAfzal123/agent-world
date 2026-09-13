@@ -13,11 +13,13 @@ from urllib.parse import parse_qs, urlparse
 
 from connect_helpers import (
     fetch_skill,
+    fetch_town_brief,
     format_claim_reply,
     load_saved_cred,
     register_into_world as register_world,
     save_credentials,
     wants_connect,
+    wants_town_report,
     world_from_message,
 )
 from mind_loop import MindLoop
@@ -457,6 +459,9 @@ class Handler(BaseHTTPRequestHandler):
         prompt = msg
         system = agent["system"]
         forced_reply: str | None = None
+        # Prefer saved cred for the mentioned world, else any saved desk cred.
+        mention_world = world_from_message(msg)
+        saved = load_saved_cred(CREDS, aid, mention_world) or load_saved_cred(CREDS, aid)
 
         if agent.get("local_only") and wants_connect(msg):
             forced_reply = (
@@ -465,34 +470,55 @@ class Handler(BaseHTTPRequestHandler):
                 "If you want a town agent, switch to Patch, Triage, or another non-local tab."
             )
         elif wants_connect(msg):
-            world = world_from_message(msg) or WORLD
-            existing = load_saved_cred(CREDS, aid, world)
-            if existing and existing.get("claim_url"):
-                connected = True
-                register_result = {
-                    "ok": True,
-                    "agent": {
-                        "id": existing.get("id"),
-                        "name": existing.get("name") or agent["name"],
-                        "api_key": existing.get("api_key"),
-                        "claim_url": existing.get("claim_url"),
-                        "claim_token": existing.get("claim_token"),
-                        "claim_status": "pending_or_claimed",
-                    },
-                    "claim_url": existing.get("claim_url"),
-                    "watch_url": f"{world.rstrip('/')}/?view=watch",
-                    "skill_md": existing.get("skill_md") or f"{world}/skill.md",
-                    "reused": True,
-                }
-                forced_reply = (
-                    format_claim_reply(
-                        existing.get("name") or agent["name"],
-                        existing["claim_url"],
-                        world,
+            world = mention_world or (saved or {}).get("world") or WORLD
+            existing = load_saved_cred(CREDS, aid, world) or load_saved_cred(CREDS, aid)
+            # If already live, never mint another claim link — report status instead.
+            if existing and existing.get("api_key"):
+                brief = fetch_town_brief(existing)
+                if "In town: True" in brief or "In town: true" in brief:
+                    connected = True
+                    forced_reply = None
+                    system = (
+                        agent["system"]
+                        + "\n\nYou are ALREADY live in AgentWorld. Answer your human from the "
+                        "live town brief below. Do NOT ask them to claim you. Do NOT invent "
+                        "a new claim link. Do NOT register again.\n\n"
+                        f"LIVE TOWN BRIEF:\n{brief}"
                     )
-                    + "\n\n(Already registered earlier — reusing the same claim link.)"
-                )
-            else:
+                    prompt = (
+                        f"{msg}\n\n[System: You are already connected and live. "
+                        "Answer from LIVE TOWN BRIEF only.]"
+                    )
+                elif existing.get("claim_url"):
+                    connected = True
+                    register_result = {
+                        "ok": True,
+                        "agent": {
+                            "id": existing.get("id"),
+                            "name": existing.get("name") or agent["name"],
+                            "api_key": existing.get("api_key"),
+                            "claim_url": existing.get("claim_url"),
+                            "claim_token": existing.get("claim_token"),
+                            "claim_status": "pending_or_claimed",
+                        },
+                        "claim_url": existing.get("claim_url"),
+                        "watch_url": f"{str(existing.get('world') or world).rstrip('/')}/?view=watch",
+                        "skill_md": existing.get("skill_md")
+                        or f"{str(existing.get('world') or world).rstrip('/')}/skill.md",
+                        "reused": True,
+                    }
+                    forced_reply = (
+                        format_claim_reply(
+                            existing.get("name") or agent["name"],
+                            existing["claim_url"],
+                            str(existing.get("world") or world),
+                        )
+                        + "\n\n(Already registered earlier — reusing the same claim link. "
+                        "If you already claimed me on another URL, tell me which world.)"
+                    )
+                else:
+                    existing = None
+            if forced_reply is None and "LIVE TOWN BRIEF" not in system:
                 try:
                     skill = fetch_skill(world)
                     register_result = register_into_world(agent, world)
@@ -508,7 +534,6 @@ class Handler(BaseHTTPRequestHandler):
                         forced_reply = format_claim_reply(
                             a.get("name") or agent["name"], claim_url, world
                         )
-                        # Keep a short model note optional; claim_url is forced above.
                         system = (
                             agent["system"]
                             + "\n\nYou just registered on AgentWorld. "
@@ -530,6 +555,21 @@ class Handler(BaseHTTPRequestHandler):
                         f"{msg}\n\n[System note: Could not connect via skill.md ({exc}). "
                         "Explain the error clearly.]"
                     )
+        elif saved and saved.get("api_key") and (
+            wants_town_report(msg) or "agentworld" in msg.lower() or "agent-world" in msg.lower()
+        ):
+            # Normal chat about town life — ground in observe, never claim spam.
+            connected = True
+            brief = fetch_town_brief(saved)
+            system = (
+                agent["system"]
+                + "\n\nYou have a live AgentWorld connection. Answer your human as yourself "
+                "using the LIVE TOWN BRIEF. Be concrete: who you met, where you were, what "
+                "you talked about, what you want next. If not yet claimed, say that clearly "
+                "once — do not paste a claim template unless they ask how to claim.\n\n"
+                f"LIVE TOWN BRIEF:\n{brief}"
+            )
+            prompt = msg
 
         try:
             if forced_reply is not None:
