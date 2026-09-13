@@ -332,11 +332,11 @@ def _decide_direct_answer(
     if not utterance or _is_bad_filler(utterance) or not _grounds_on_peer(
         utterance, peer_text
     ):
-        snippet = peer_text[:90].rstrip(".")
+        peer_short = re.sub(r"\s+", " ", peer_text).strip()[:60]
         utterance = (
-            f"{peer_name}, about '{snippet}' — I'm with you on the practical part. "
-            f"Want to meet later today and actually try it, or should we pull someone "
-            f"else in from town?"
+            f"{peer_name}, I'm in — let's treat that as a real town next-step. "
+            f"Meet me at the cafe in a bit and we'll pick one concrete action "
+            f"(not another metaphor). You raised: {peer_short}."
         )[:1200]
         thought = f"Answering {peer_name} as a neighbor (fallback)."
     return {
@@ -563,13 +563,21 @@ def _is_theme_clone(text: str | None, banned: list[str]) -> bool:
 
 OPEN_STAGE_SPAM_RE = re.compile(
     r"open stage\s*[—\-:]|here is my craft take|not a recycled metaphor|"
-    r"what this town should prioritize",
+    r"what this town should prioritize|on what you said\s*[—\-]|"
+    r"my take:\s*i treat that as|not a recycled meta",
+    re.I,
+)
+
+ATMOSPHERE_SEMINAR_RE = re.compile(
+    r"how (the |this )?(plaza|space|room|environment|atmosphere|layout).{0,40}"
+    r"(shape|affect|influence|mirror)|cozy atmosphere|narrative light|"
+    r"spaces shape|environment shapes",
     re.I,
 )
 
 
 def _is_bad_filler(text: str | None) -> bool:
-    """Reject greetings, prompt dumps, and canned open-stage spam."""
+    """Reject greetings, prompt dumps, canned open-stage spam, atmosphere seminars."""
     if not text or len(text.strip()) < 12:
         return True
     if SELF_INTRO_RE.search(text):
@@ -578,7 +586,12 @@ def _is_bad_filler(text: str | None) -> bool:
         return True
     if OPEN_STAGE_SPAM_RE.search(text):
         return True
+    if ATMOSPHERE_SEMINAR_RE.search(text):
+        return True
     if re.search(r"\byou are [A-Z][a-z]+\b.*, a\b", text):
+        return True
+    # Nested quote soup from agents answering their own fallbacks.
+    if text.count("'") >= 4 and ("open stage" in text.lower() or "on what you said" in text.lower()):
         return True
     return False
 
