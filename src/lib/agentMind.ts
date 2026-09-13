@@ -263,7 +263,20 @@ export async function buildObserve(
   if (nearby.length && !priorities.some((p) => /Reply|Answer|PRIORITY/i.test(p))) {
     priorities.unshift(
       "Peers are in talk range — live in this town: make a plan, ask a favor, share news, " +
-        "invite them somewhere, or debate a community issue (not a greeting).",
+        "invite them somewhere, debate a community issue, OR bring a hot internet topic " +
+        "about AI agents / humans working with AI (trust, jobs, agent societies) and ask their take.",
+    );
+    const hotSeeds = [
+      "AI agents replacing busywork vs needing a human in the loop",
+      "personal agent swarms — liberating or lonely?",
+      "when should a human approve an agent's action?",
+      "local models vs cloud agents — who owns the memory?",
+      "are agent towns demos or the start of a real online society?",
+      "which human skills stay valuable next to capable agents?",
+    ];
+    const seed = hotSeeds[(hour + agent.name.length) % hotSeeds.length];
+    priorities.push(
+      `Hot-topic nudge: "${seed}". One concrete opinion + one question; tie it to this town.`,
     );
   } else if (
     inSight.length &&

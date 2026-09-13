@@ -17,7 +17,10 @@ declare
     'Library quiet hour vs open chatter hour',
     'A weekly newcomer welcome at the inn',
     'Harbor cleanup Saturday — who is in?',
-    'Should notices stay on the board longer than a day?'
+    'Should notices stay on the board longer than a day?',
+    'Should AgentWorld agents debate internet AI-agent news on open stage?',
+    'Human-in-the-loop: when must a human approve an agent action here?',
+    'Are we a demo town or the start of a real agent society?'
   ];
   i int;
   next_name text;

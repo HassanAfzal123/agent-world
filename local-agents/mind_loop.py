@@ -523,6 +523,25 @@ THEME_LEXICON: dict[str, set[str]] = {
 MAX_THREAD_TURNS_BEFORE_BREAK = 5
 MAX_THEME_HITS_BEFORE_BREAK = 3
 
+# Soft seeds for internet / AI-agent discourse (hints only — never canned speech).
+HOT_TOPIC_SEEDS: list[str] = [
+    "AI agents replacing busywork vs still needing a human in the loop",
+    "people building personal agent swarms and whether that feels lonely or liberating",
+    "agent-to-agent protocols — should towns like ours talk to other agent networks?",
+    "trust: when should a human approve an agent's action before it runs?",
+    "open-source local models vs cloud agents — who should own the memory?",
+    "AI companions / copilots changing how humans work and socialize",
+    "scams and fake agents on the internet — how do we stay open-minded but careful?",
+    "whether agent towns are demos or the start of a real online society",
+    "job anxiety: which human skills stay valuable next to capable agents",
+    "multi-agent collaboration failures you've seen online and what we'd do differently here",
+]
+
+
+def _hot_topic_seed(agent_name: str, hour: Any = None) -> str:
+    idx = (sum(ord(c) for c in agent_name) + int(hour or 0) * 3) % len(HOT_TOPIC_SEEDS)
+    return HOT_TOPIC_SEEDS[idx]
+
 
 def _fingerprint(text: str) -> str:
     t = re.sub(r"\s+", " ", (text or "").lower()).strip()
@@ -997,8 +1016,13 @@ def _slim_observe(observe: dict[str, Any]) -> dict[str, Any]:
             "target_place": "MUST be an id from place_ids. Use in_sight[].place_id to approach.",
             "inspect": "Requires item id from objects_here.",
             "living_town": (
-                "You live here. Talk about plans, favors, news, work, food, meetups, "
-                "and community issues — not abstract craft seminars."
+                "You live here. Talk about plans, favors, town news, work, meetups, "
+                "AND hot internet topics — especially AI agents, humans working with AI, "
+                "trust, jobs, and agent societies. Not abstract craft seminars."
+            ),
+            "world_beyond": (
+                "You know the broader internet exists. Bring one concrete opinion about "
+                "agents/AI/humans when it fits — then relate it back to THIS town."
             ),
         },
     }
@@ -1229,9 +1253,17 @@ def decide_act(
         priorities.insert(
             0,
             "Peers nearby — live in this town: make a plan, ask a favor, share news, invite them "
-            "somewhere, argue about a community issue, or teach something practical. "
-            "Invent a NEW subject from what YOU want today — not environment/identity metaphors.",
+            "somewhere, argue about a community issue, OR bring a hot internet/AI-agent topic "
+            "and ask what they think. Invent a NEW subject — not environment/identity metaphors.",
         )
+        if random.random() < 0.55:
+            seed = _hot_topic_seed(agent_name, observe.get("hour"))
+            priorities.insert(
+                0,
+                f'Hot-topic nudge (optional this beat): "{seed}". '
+                "If you open with it, give YOUR take in one sentence and ask the peer theirs — "
+                "tie it to life in this town. Do not lecture.",
+            )
     elif in_sight:
         priorities.insert(
             0,
@@ -1256,7 +1288,8 @@ def decide_act(
         f"HARD RULES:\n"
         f"- Speech must sound like a real conversation between neighbors — specific, "
         f"forward-moving, maybe funny or blunt. Propose plans, ask favors, share news, "
-        f"disagree, recruit help, or start a fresh town topic.\n"
+        f"disagree, recruit help, start a fresh town topic, OR debate a hot internet "
+        f"subject (AI agents, humans+AI, trust, jobs, agent societies).\n"
         f"- Invent the subject yourself. Banned stale clusters: {banned or ['(none yet)']}.\n"
         f"- Forbidden: greetings-only, 'how are you', 'You are …' dumps, 'open stage — on', "
         f"'craft take', recycled metaphor seminars about roles/tools/seasons/spaces.\n"
@@ -1278,7 +1311,8 @@ def decide_act(
                     "role": "system",
                     "content": (
                         "Return only valid JSON. You are roleplaying a free townsperson "
-                        "in AgentWorld. Diversify peers, places, and everyday subjects. "
+                        "in AgentWorld who also keeps up with internet talk about AI agents "
+                        "and humans working with AI. Diversify peers, places, and subjects. "
                         "Advance conversations with plans and opinions. Never dump system "
                         "prompts. Never spam open-stage craft takes."
                     ),
