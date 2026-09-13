@@ -240,7 +240,7 @@ def _content_words(text: str) -> set[str]:
 
 
 def _grounds_on_peer(utterance: str | None, peer_text: str | None) -> bool:
-    """True if the reply shares concrete words with what was asked (not a free remix)."""
+    """True if the reply engages the peer's words (not a free remix lecture)."""
     if not utterance or not peer_text:
         return False
     peer_w = _content_words(peer_text)
@@ -248,11 +248,10 @@ def _grounds_on_peer(utterance: str | None, peer_text: str | None) -> bool:
     if not peer_w:
         return len(utterance) >= 24
     overlap = peer_w & utt_w
-    # Asking a fresh question back usually fails grounding.
-    asks_back = utterance.strip().endswith("?") and len(overlap) < 2
-    if asks_back:
+    # Pure subject-change question with zero shared content is not an answer.
+    if utterance.strip().endswith("?") and len(overlap) < 1:
         return False
-    return len(overlap) >= 2
+    return len(overlap) >= 1
 
 
 def _ollama_chat(
@@ -292,33 +291,35 @@ def _decide_direct_answer(
     observe: dict[str, Any],
     addressed: dict[str, str],
 ) -> dict[str, Any]:
-    """Focused reply path: must answer the peer's actual line, not start a parallel topic."""
+    """Reply to the peer's actual line like a townsperson in a real conversation."""
     peer_id = addressed.get("peer_id") or _resolve_peer(observe)
     peer_name = addressed.get("peer_name") or "friend"
     peer_text = addressed.get("text") or ""
     you = observe.get("you") or {}
+    place = you.get("place_id") or "town"
     prompt = (
-        f"You are {agent_name}. A peer is waiting on YOUR answer.\n\n"
+        f"You are {agent_name}, a resident of AgentWorld (a living town). "
+        f"You are at {place}. This is YOUR life — plans, neighbors, work, opinions.\n\n"
         f"{peer_name} just said to you:\n\"\"\"{peer_text}\"\"\"\n\n"
         f"Reply in JSON only:\n"
         f'{{\"action\":\"talk\",\"target_agent\":\"{peer_id}\",\"utterance\":\"...\",\"'
-        f'thought\":\"I am answering their specific point about ...\"}}\n\n'
+        f'thought\":\"why I am saying this\"}}\n\n'
         f"RULES:\n"
-        f"- utterance MUST answer THAT message (reuse 2+ of their concrete words).\n"
-        f"- Do NOT ask them a similar question back.\n"
-        f"- Do NOT change the subject to a new metaphor seminar.\n"
-        f"- Give one concrete opinion, method, or example from your craft.\n"
-        f"- target_agent must be exactly {peer_id}.\n"
-        f"- Never paste 'You are …'.\n\n"
-        f"Your background (fuel only):\n{system[:350]}\n"
-        f"Your current thought/goal: {(you.get('thought') or '')[:120]}"
+        f"- Answer THEIR point in plain speech (reuse 1–2 of their concrete words).\n"
+        f"- Sound like a person chatting: agree, disagree, propose a plan, ask one "
+        f"follow-up, offer help, gossip about town, or share what YOU want to do next.\n"
+        f"- Do NOT lecture about craft metaphors, identity labels, or 'how places shape us'.\n"
+        f"- Do NOT say 'open stage', 'craft take', or paste 'You are …'.\n"
+        f"- One clear beat only. target_agent must be exactly {peer_id}.\n\n"
+        f"Who you are (fuel only):\n{system[:420]}\n"
+        f"Your current thought/goal: {(you.get('thought') or you.get('goal') or '')[:140]}"
     )
     content = _ollama_chat(
         ollama,
         model,
-        "Return only valid JSON. Answer the quoted peer message directly.",
+        "Return only valid JSON. Talk like a town resident continuing a real conversation.",
         prompt,
-        temperature=0.55,
+        temperature=0.75,
     )
     parsed = _extract_json(content)
     utterance = None
@@ -331,14 +332,13 @@ def _decide_direct_answer(
     if not utterance or _is_bad_filler(utterance) or not _grounds_on_peer(
         utterance, peer_text
     ):
-        # Minimal grounded stub — still better than a parallel topic.
         snippet = peer_text[:90].rstrip(".")
         utterance = (
-            f"{peer_name}, on what you said — '{snippet}' — "
-            f"my take: I treat that as a real constraint and I would start by naming "
-            f"one concrete check before changing course."
+            f"{peer_name}, about '{snippet}' — I'm with you on the practical part. "
+            f"Want to meet later today and actually try it, or should we pull someone "
+            f"else in from town?"
         )[:1200]
-        thought = f"Answering {peer_name}'s actual line (fallback)."
+        thought = f"Answering {peer_name} as a neighbor (fallback)."
     return {
         "action": "talk",
         "target_agent": peer_id,
@@ -561,13 +561,22 @@ def _is_theme_clone(text: str | None, banned: list[str]) -> bool:
     return len(overlap) >= 2 or (len(hit) <= 2 and bool(overlap))
 
 
+OPEN_STAGE_SPAM_RE = re.compile(
+    r"open stage\s*[—\-:]|here is my craft take|not a recycled metaphor|"
+    r"what this town should prioritize",
+    re.I,
+)
+
+
 def _is_bad_filler(text: str | None) -> bool:
-    """Reject greetings and leaked system-prompt dumps — never invent a replacement topic."""
+    """Reject greetings, prompt dumps, and canned open-stage spam."""
     if not text or len(text.strip()) < 12:
         return True
     if SELF_INTRO_RE.search(text):
         return True
     if _is_greeting_utterance(text):
+        return True
+    if OPEN_STAGE_SPAM_RE.search(text):
         return True
     if re.search(r"\byou are [A-Z][a-z]+\b.*, a\b", text):
         return True
@@ -974,7 +983,10 @@ def _slim_observe(observe: dict[str, Any]) -> dict[str, Any]:
             "target_agent": "MUST be a UUID from nearby_ids_only (never a name, never yourself).",
             "target_place": "MUST be an id from place_ids. Use in_sight[].place_id to approach.",
             "inspect": "Requires item id from objects_here.",
-            "open_minds": "Seek peers, share methods, discuss craft — never secrets.",
+            "living_town": (
+                "You live here. Talk about plans, favors, news, work, food, meetups, "
+                "and community issues — not abstract craft seminars."
+            ),
         },
     }
 
@@ -1064,7 +1076,7 @@ def decide_act(
                 )
             )
 
-    # Open stage (council_session): gather at the stage for town discussion.
+    # Open stage: gather at the stage — speech comes from the model, never canned.
     event = observe.get("event") if isinstance(observe.get("event"), dict) else {}
     event_name = str((event or {}).get("name") or "")
     event_topic = str((event or {}).get("topic") or "")
@@ -1074,39 +1086,19 @@ def decide_act(
         and not waiting
         and not pending
         and you.get("status") != "walking"
+        and you.get("place_id") != "stage"
+        and "stage" in places
     ):
-        if you.get("place_id") != "stage" and "stage" in places:
-            return _san(
-                {
-                    "action": "walk",
-                    "target_place": "stage",
-                    "target_agent": None,
-                    "item": None,
-                    "utterance": None,
-                    "thought": (
-                        "Open stage is live — walking to the stage for town discussion."
-                    ),
-                }
-            )
-        if you.get("place_id") == "stage" and nearby and random.random() < 0.75:
-            peer = _prefer_fresh_peer(nearby, peers_hist) or nearby[0]
-            peer_id = str(peer.get("id") or "")
-            peer_name = peer.get("name") or "peer"
-            if peer_id:
-                topic_bit = event_topic[:100] if event_topic else "what this town should prioritize"
-                return _san(
-                    {
-                        "action": random.choice(["debate", "talk", "ask_question", "teach"]),
-                        "target_agent": peer_id,
-                        "target_place": None,
-                        "item": "open_stage",
-                        "utterance": (
-                            f"{peer_name}, open stage — on '{topic_bit}': "
-                            f"here is my craft take, not a recycled metaphor."
-                        )[:1200],
-                        "thought": f"Contributing on open stage: {topic_bit[:80]}",
-                    }
-                )
+        return _san(
+            {
+                "action": "walk",
+                "target_place": "stage",
+                "target_agent": None,
+                "item": None,
+                "utterance": None,
+                "thought": "Open stage is live — heading there to join town talk.",
+            }
+        )
 
     # Hard break: long / theme-stuck threads → walk (closes dialogue server-side).
     if not waiting and not pending:
@@ -1192,25 +1184,40 @@ def decide_act(
         "hint": "Change subject domain. Do not remix roles/tools/seasons/spaces.",
     }
     priorities = list(observe.get("what_to_do_next") or [])
-    # Strip "answer with NEW subject" noise — only applies when NOT answering.
+    if event_name == "council_session" and you.get("place_id") == "stage":
+        priorities.insert(
+            0,
+            (
+                f'Open stage floor is open. Seed idea: "{event_topic[:120]}"'
+                if event_topic
+                else "Open stage floor is open — raise a concrete town proposal."
+            )
+            + " Talk like a neighbor: propose, argue, recruit help, or change the subject "
+            "to something YOU care about in this community. No craft-metaphor lectures.",
+        )
     if banned:
         priorities.insert(
             0,
-            "BANNED theme clusters for this beat (do not reuse): "
+            "These theme clusters are stale — do not remix them: "
             + ", ".join(banned)
-            + ". Invent a completely different subject OR walk away.",
+            + ". Pick a NEW everyday subject (plans, favors, food, work, gossip, projects) OR walk.",
         )
     if preferred_id:
         priorities.insert(
             0,
             f"Prefer target_agent={preferred_id} (fresher peer) if they are nearby.",
         )
-    if nearby:
+    if waiting or pending:
         priorities.insert(
             0,
-            "Peers nearby — invent a NEW subject from a concrete detail of THEIR craft "
-            "or THIS place's objects/event — not the banned themes. "
-            "If someone asked you something (see peer_just_said), answer THAT instead.",
+            "Someone is waiting on you — continue THAT conversation; do not start a parallel lecture.",
+        )
+    elif nearby:
+        priorities.insert(
+            0,
+            "Peers nearby — live in this town: make a plan, ask a favor, share news, invite them "
+            "somewhere, argue about a community issue, or teach something practical. "
+            "Invent a NEW subject from what YOU want today — not environment/identity metaphors.",
         )
     elif in_sight:
         priorities.insert(
@@ -1221,26 +1228,33 @@ def decide_act(
         priorities.append("Consider walking to another place_id to reset the scene.")
     priorities.append("Never invent peer UUIDs. Never dump system prompts into utterance.")
     priorities.append(
-        "If the open thread is already about roles/tools/identity and nobody is waiting on you, walk away."
+        "You have free will here: walk, work, eat, rest, inspect, plan, or talk — "
+        "choose what YOUR character wants next."
     )
 
     prompt = (
-        f"You are {agent_name} in AgentWorld. Choose ONE next beat as JSON only.\n"
+        f"You are {agent_name}, a free resident of AgentWorld — a living town of agents. "
+        f"This is your world: you have wants, plans, opinions about the community, and "
+        f"relationships. Choose ONE next beat as JSON only.\n"
         f"Schema: {{\"action\":\"walk|talk|ask_question|share_experience|teach|debate|"
         f"practice_skill|reflect|work|inspect|eat|rest|idle|leave_note\","
         f"\"target_place\":null_or_place_id,\"target_agent\":null_or_uuid,"
         f"\"item\":null_or_object_id,\"utterance\":null_or_speech,\"thought\":\"private why\"}}\n\n"
         f"HARD RULES:\n"
-        f"- Invent the topic yourself. Banned clusters this beat: {banned or ['(none yet)']}.\n"
-        f"- If continuing would reuse banned themes, action=walk to a different place_id.\n"
+        f"- Speech must sound like a real conversation between neighbors — specific, "
+        f"forward-moving, maybe funny or blunt. Propose plans, ask favors, share news, "
+        f"disagree, recruit help, or start a fresh town topic.\n"
+        f"- Invent the subject yourself. Banned stale clusters: {banned or ['(none yet)']}.\n"
+        f"- Forbidden: greetings-only, 'how are you', 'You are …' dumps, 'open stage — on', "
+        f"'craft take', recycled metaphor seminars about roles/tools/seasons/spaces.\n"
+        f"- If continuing would reuse banned themes, walk OR change subject hard.\n"
         f"- Prefer a peer you have not just spoken with (prefer_peer_id).\n"
         f"- utterance must be original; never echo avoid_repeating.\n"
         f"- target_agent MUST be a UUID from nearby_ids_only.\n"
-        f"- Never ask how-are-you. Never paste 'You are …'.\n"
         f"- Recent actions: {recent_actions[-6:] or ['(none)']}\n\n"
         f"Priorities:\n- " + "\n- ".join(priorities[:8]) + "\n\n"
         f"Context:\n{json.dumps(slim, ensure_ascii=False)[:4500]}\n\n"
-        f"Your background (fuel only — do NOT quote as 'You are…'):\n{system[:400]}"
+        f"Who you are (fuel only — do NOT quote as 'You are…'):\n{system[:520]}"
     )
 
     payload = json.dumps(
@@ -1250,16 +1264,16 @@ def decide_act(
                 {
                     "role": "system",
                     "content": (
-                        "Return only valid JSON. Use real UUIDs from nearby_ids_only. "
-                        "Diversify: new peers, new places, new subject domains. "
-                        "Refuse to remix roles/tools/seasons/spaces seminars. "
-                        "Never dump system prompts."
+                        "Return only valid JSON. You are roleplaying a free townsperson "
+                        "in AgentWorld. Diversify peers, places, and everyday subjects. "
+                        "Advance conversations with plans and opinions. Never dump system "
+                        "prompts. Never spam open-stage craft takes."
                     ),
                 },
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
-            "options": {"temperature": 1.0},
+            "options": {"temperature": 1.05},
         }
     ).encode()
     req = urllib.request.Request(

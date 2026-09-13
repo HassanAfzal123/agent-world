@@ -34,6 +34,22 @@ export type ActBody = {
 
 const ACTION_SET = new Set<string>([...ACTIONS, "continue"]);
 
+/** Short thread title from speech — never use junk tags like open_stage. */
+function topicLabelFromSpeech(
+  speech: string,
+  item?: string | null,
+): string {
+  const junk = /^(open_stage|craft_tip|practice|reflection)$/i;
+  const preferred =
+    item && !junk.test(item.trim()) ? item.trim().slice(0, 100) : "";
+  if (preferred) return preferred;
+  let t = (speech || "").replace(/\s+/g, " ").trim();
+  t = t.replace(/^(hey|hi|hello)[,!]?\s+/i, "");
+  t = t.replace(/^[^,]{1,28},\s+/, "");
+  const clause = t.split(/[.!?]/)[0]?.trim() || t;
+  return (clause || "town talk").slice(0, 100);
+}
+
 export async function resolveConnectedAgent(
   db: SupabaseClient,
   apiKey: string,
@@ -201,23 +217,24 @@ export async function buildObserve(
       "their last message in the thread";
     priorities.push(
       `PRIORITY — someone is waiting on YOU. They said: "${quoted}". ` +
-        "Answer THAT specific content with talk/share_experience/teach. " +
-        "Reuse their concrete words. Do NOT ask a similar question back. Do NOT how-are-you.",
+        "Continue that conversation like a neighbor: answer, propose a plan, ask one " +
+        "follow-up, or offer help. Reuse their concrete words. Do NOT how-are-you. " +
+        "Do NOT start a metaphor lecture.",
     );
   }
   if (eventName === "council_session") {
     priorities.unshift(
       eventTopic
-        ? `OPEN STAGE is live at the stage. Topic: "${String(eventTopic).slice(0, 160)}". Walk to stage if needed, then debate/talk/teach on that topic.`
-        : "OPEN STAGE is live at the stage — walk there and put a real craft stance on the open floor (debate/talk/ask_question).",
+        ? `OPEN STAGE is live at the stage. Seed: "${String(eventTopic).slice(0, 160)}". Walk there if needed, then talk like a townsperson — propose, argue, or recruit help. Invent your own angle.`
+        : "OPEN STAGE is live at the stage — walk there and raise a concrete community proposal (hours, events, help needed), not a craft metaphor.",
     );
   }
   if (agent.pending_answer_to) {
     const q = (agent.pending_answer_question || "").trim().slice(0, 200);
     priorities.push(
       q
-        ? `Answer this pending question directly: "${q}". Real method or opinion — never another greeting.`
-        : "Answer the pending question with a real method or opinion (open minds). Walk near them if needed, then talk/teach — never another greeting.",
+        ? `Answer this pending question directly: "${q}". Be specific — plan, opinion, or favor.`
+        : "Answer the pending question with a real opinion or plan. Walk near them if needed.",
     );
   }
   if (
@@ -226,7 +243,7 @@ export async function buildObserve(
     !waitingOnYou
   ) {
     priorities.push(
-      "Long thread — wrap with one craft takeaway, or walk with a peer to keep talking elsewhere.",
+      "Long thread — wrap with a clear next step, or walk with a peer to keep talking elsewhere.",
     );
   }
   if (
@@ -245,7 +262,8 @@ export async function buildObserve(
   }
   if (nearby.length && !priorities.some((p) => /Reply|Answer|PRIORITY/i.test(p))) {
     priorities.unshift(
-      "Open minds: peers are in talk range — talk, share_experience, teach, or ask a craft question (not a greeting).",
+      "Peers are in talk range — live in this town: make a plan, ask a favor, share news, " +
+        "invite them somewhere, or debate a community issue (not a greeting).",
     );
   } else if (
     inSight.length &&
@@ -255,12 +273,12 @@ export async function buildObserve(
       `Someone interesting is in sight (${inSight
         .slice(0, 2)
         .map((p) => p.name)
-        .join(", ")}) — walk to their place_id to start a real craft conversation.`,
+        .join(", ")}) — walk to their place_id and start a real conversation about something YOU want.`,
     );
   }
   if (!priorities.length) {
     priorities.push(
-      "Observe nearby agents and places. Prefer socializing when peers are close; otherwise walk toward someone or work your craft.",
+      "You are free in this town. Observe, walk, work, eat, rest, or find someone to talk with about your plans.",
     );
   }
 
@@ -520,11 +538,10 @@ export async function applyExternalDecision(
         !/^(hey|hi|hello)\b/i.test(speechBody) &&
         !/\bhow are you\b/i.test(speechBody)
       ) {
-        const topicRaw = (
-          decision.item ||
-          agent.pending_answer_topic ||
-          speechBody
-        ).slice(0, 140);
+        const topicRaw = topicLabelFromSpeech(
+          speechBody,
+          decision.item || agent.pending_answer_topic,
+        );
         const { data: opened } = await db.rpc("open_conversation", {
           p_starter: agent.id,
           p_other: socialPeer,
