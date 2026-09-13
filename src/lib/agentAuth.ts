@@ -34,9 +34,14 @@ function anonDb(): SupabaseClient | null {
   });
 }
 
-/** Prefer service role; fall back to anon for local/dev when service key is unset. */
+/** Prefer service role. In production, never fall back to anon (RPCs are revoked). */
 export function apiDb(): SupabaseClient {
-  const db = serviceDb() || anonDb();
+  const svc = serviceDb();
+  if (svc) return svc;
+  if (process.env.VERCEL || process.env.NODE_ENV === "production") {
+    throw new Error("supabase_service_role_required");
+  }
+  const db = anonDb();
   if (!db) {
     throw new Error("supabase_unconfigured");
   }

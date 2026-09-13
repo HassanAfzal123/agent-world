@@ -59,10 +59,17 @@ export const runtime = "nodejs";
 
 function service() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) return null;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    if (process.env.VERCEL || process.env.NODE_ENV === "production") {
+      return null;
+    }
+    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!anon) return null;
+    return createServiceClient(url!, anon, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+  }
   return createServiceClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
@@ -77,6 +84,9 @@ async function db() {
       >,
       using: process.env.SUPABASE_SERVICE_ROLE_KEY ? "service" : "anon",
     };
+  }
+  if (process.env.VERCEL || process.env.NODE_ENV === "production") {
+    throw new Error("supabase_service_role_required");
   }
   const supabase = await createServerClient();
   return { supabase, using: "ssr" };
@@ -234,6 +244,18 @@ export async function POST(req: Request) {
           agent: agent.name,
           decision: { action: "continue" },
           walking: true,
+        });
+        continue;
+      }
+
+      // Connected agents bring their own LLM. The town hosts them; it does not
+      // puppet their minds with a server model.
+      if (agent.origin === "connected" || agent.is_npc === false) {
+        results.push({
+          agent: agent.name,
+          decision: { action: "continue" },
+          connected: true,
+          note: "external_brain",
         });
         continue;
       }

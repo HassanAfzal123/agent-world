@@ -17,10 +17,17 @@ export const runtime = "nodejs";
 
 function service() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) return null;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    if (process.env.VERCEL || process.env.NODE_ENV === "production") {
+      return null;
+    }
+    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!url || !anon) return null;
+    return createServiceClient(url, anon, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+  }
   return createServiceClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
@@ -30,6 +37,9 @@ async function db() {
   const svc = service();
   if (svc) {
     return svc as unknown as Awaited<ReturnType<typeof createServerClient>>;
+  }
+  if (process.env.VERCEL || process.env.NODE_ENV === "production") {
+    throw new Error("supabase_service_role_required");
   }
   return createServerClient();
 }
