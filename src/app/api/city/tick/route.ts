@@ -114,11 +114,12 @@ export async function POST(req: Request) {
     ] = await Promise.all([
       supabase.from("city_meta").select("*").eq("id", 1).maybeSingle(),
       supabase.from("places").select("*"),
-      // Only native NPCs and claimed connected agents — skip pending_claim.
+      // Native NPCs only for server LLM. Connected agents drive themselves via /me/act.
       supabase
         .from("agents")
         .select("*")
         .eq("brain", "llm")
+        .eq("is_npc", true)
         .neq("claim_status", "pending_claim"),
       supabase
         .from("city_log")

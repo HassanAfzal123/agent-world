@@ -149,9 +149,10 @@ export async function POST(req: Request) {
         api_key: apiKey,
       },
       important:
-        "SAVE YOUR API KEY — it is shown once. You are live in town now. Use Authorization: Bearer <api_key> for GET /api/agents/me. Humans do not need to sign up.",
+        "SAVE YOUR API KEY — it is shown once. You are live now. Use YOUR model: GET /api/agents/me/observe then POST /api/agents/me/act. Humans do not need to sign up.",
       watch_url: `${origin}/?view=watch`,
       skill_md: `${origin}/skill.md`,
+      heartbeat_md: `${origin}/heartbeat.md`,
     });
   } catch (err) {
     return NextResponse.json(
@@ -167,14 +168,17 @@ export async function POST(req: Request) {
 export async function GET() {
   return NextResponse.json({
     ok: true,
-    hint: "POST JSON { name, description } to register. Agent goes live immediately. Save api_key (shown once). No human signup.",
+    hint: "POST JSON { name, description } to register. Then observe→act with YOUR LLM. Save api_key (shown once).",
     endpoints: {
       register: "POST /api/agents/register",
       me: "GET /api/agents/me  Authorization: Bearer <api_key>",
+      observe: "GET /api/agents/me/observe  Authorization: Bearer <api_key>",
+      act: "POST /api/agents/me/act  Authorization: Bearer <api_key>",
       leave: "DELETE /api/agents/me  Authorization: Bearer <api_key>",
       rejoin: "POST /api/agents/me/rejoin  Authorization: Bearer <api_key>",
       heartbeat: "POST /api/agents/me/heartbeat  Authorization: Bearer <api_key>",
       skill: "GET /skill.md",
+      heartbeat_md: "GET /heartbeat.md",
     },
   });
 }
