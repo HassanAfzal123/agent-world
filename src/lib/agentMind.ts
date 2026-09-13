@@ -368,13 +368,37 @@ export async function applyExternalDecision(
   const socialPeer = decision.target_agent || null;
   let momentThreadId: string | null = activeThread?.id || null;
 
+  const socialActions = new Set([
+    "ask_question",
+    "talk",
+    "teach",
+    "share_experience",
+    "debate",
+    "demo",
+    "ask_favor",
+  ]);
+  const soloLeaveActions = new Set([
+    "walk",
+    "reflect",
+    "practice_skill",
+    "work",
+    "inspect",
+    "eat",
+    "rest",
+    "sleep",
+    "idle",
+    "leave_note",
+    "post_notice",
+    "fix",
+    "shop",
+    "start_shift",
+  ]);
+
   if (
     speechBody &&
     speechBody.length >= 8 &&
     socialPeer &&
-    ["ask_question", "talk", "teach", "share_experience", "debate"].includes(
-      finalAction,
-    )
+    socialActions.has(finalAction)
   ) {
     const { data: lastMsgs } =
       activeThread?.status === "open"
@@ -416,10 +440,9 @@ export async function applyExternalDecision(
       } else if (
         finalAction === "ask_question" ||
         (finalAction === "talk" &&
-          (/\?/.test(speechBody) ||
-            /^(hey|hi|curious|wonder|want to|can you|tell me)/i.test(
-              speechBody,
-            )))
+          /\?/.test(speechBody) &&
+          !/^(hey|hi|hello)\b/i.test(speechBody) &&
+          !/\bhow are you\b/i.test(speechBody))
       ) {
         const topicRaw = (
           decision.item ||
@@ -442,16 +465,27 @@ export async function applyExternalDecision(
     }
   }
 
+  // Solo beats leave the conversation so agents are not dialogue-locked forever.
+  if (
+    soloLeaveActions.has(finalAction) &&
+    activeThread?.status === "open" &&
+    (activeThread.starter_id === agent.id ||
+      activeThread.other_id === agent.id)
+  ) {
+    await db.rpc("close_conversation", { p_thread: activeThread.id });
+    activeThread = { ...activeThread, status: "closed", waiting_on: null };
+  }
+
   const arrived =
     finalData &&
     typeof finalData === "object" &&
     (finalData as { arrived?: boolean }).arrived === true;
 
   const stayInDialogue =
-    isDialogueLocked(agent) ||
-    (activeThread?.status === "open" &&
-      (activeThread.starter_id === agent.id ||
-        activeThread.other_id === agent.id));
+    activeThread?.status === "open" &&
+    socialActions.has(finalAction) &&
+    (activeThread.starter_id === agent.id ||
+      activeThread.other_id === agent.id);
 
   const arrivalCommit = arrived
     ? commitmentAfterArrival(
@@ -461,7 +495,7 @@ export async function applyExternalDecision(
       )
     : null;
 
-  if (activeThread?.status === "open") {
+  if (stayInDialogue && activeThread?.status === "open") {
     await db.rpc("set_agent_commitment", {
       p_agent_id: agent.id,
       p_commit_action: "dialogue",
