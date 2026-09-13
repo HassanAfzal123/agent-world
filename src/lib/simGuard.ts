@@ -1,12 +1,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { clientIp } from "@/lib/agentAuth";
 
-/** Cron / automation: Authorization Bearer CRON_SECRET. */
+/** Cron / automation: Authorization Bearer CRON_SECRET, or Vercel Cron UA. */
 export function isCronAuthorized(req: Request): boolean {
   const secret = process.env.CRON_SECRET?.trim();
-  if (!secret) return false;
-  const auth = req.headers.get("authorization") || "";
-  return auth === `Bearer ${secret}`;
+  if (secret) {
+    const auth = req.headers.get("authorization") || "";
+    return auth === `Bearer ${secret}`;
+  }
+  const ua = req.headers.get("user-agent") || "";
+  return ua.includes("vercel-cron");
 }
 
 /**

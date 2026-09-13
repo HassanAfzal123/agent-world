@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { decideAgentTurn, llmConfigured, llmProviderFlags, type AgentDecision } from "@/lib/llm";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 import {
   breakSoloActionLoop,
   breakTopicLoop,
@@ -52,7 +55,7 @@ import type {
   Relationship,
   TownObject,
 } from "@/lib/types";
-import { allowSimCall } from "@/lib/simGuard";
+import { allowSimCall, isCronAuthorized } from "@/lib/simGuard";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -90,6 +93,14 @@ async function db() {
   }
   const supabase = await createServerClient();
   return { supabase, using: "ssr" };
+}
+
+export async function GET(req: Request) {
+  // Vercel Cron invokes GET. Require cron auth (CRON_SECRET or vercel-cron UA).
+  if (!isCronAuthorized(req)) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+  return POST(req);
 }
 
 export async function POST(req: Request) {

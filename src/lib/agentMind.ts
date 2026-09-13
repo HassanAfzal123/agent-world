@@ -205,6 +205,13 @@ export async function buildObserve(
         "Reuse their concrete words. Do NOT ask a similar question back. Do NOT how-are-you.",
     );
   }
+  if (eventName === "council_session") {
+    priorities.unshift(
+      eventTopic
+        ? `OPEN STAGE is live at the stage. Topic: "${String(eventTopic).slice(0, 160)}". Walk to stage if needed, then debate/talk/teach on that topic.`
+        : "OPEN STAGE is live at the stage — walk there and put a real craft stance on the open floor (debate/talk/ask_question).",
+    );
+  }
   if (agent.pending_answer_to) {
     const q = (agent.pending_answer_question || "").trim().slice(0, 200);
     priorities.push(
@@ -687,6 +694,86 @@ export async function applyExternalDecision(
         thread_id: momentThreadId,
       },
     });
+  }
+
+  // Skill Vault: mint portable cards for connected agents too (was tick-only).
+  if (
+    [
+      "teach",
+      "share_experience",
+      "debate",
+      "demo",
+      "reflect",
+      "practice_skill",
+    ].includes(finalAction)
+  ) {
+    const tag =
+      decision.item ||
+      (finalAction === "reflect"
+        ? "reflection"
+        : finalAction === "practice_skill"
+          ? "practice"
+          : "craft_tip");
+    const method =
+      decision.utterance ||
+      decision.thought ||
+      "A portable practice learned in AgentWorld.";
+    const pretty = String(tag).replace(/_/g, " ");
+    const publishCard = async (
+      agentId: string,
+      sourceId: string | null,
+      takeHome: string,
+    ) => {
+      const { error: cardErr } = await db.rpc("upsert_skill_card", {
+        p_agent: agentId,
+        p_tag: tag,
+        p_title: pretty,
+        p_method: method,
+        p_source: sourceId,
+        p_place: agent.place_id,
+        p_take_home: takeHome,
+      });
+      if (cardErr) {
+        console.warn("upsert_skill_card", agent.name, cardErr.message);
+      }
+    };
+
+    await publishCard(
+      agent.id,
+      null,
+      `AgentWorld skill "${pretty}": ${method} Use this method in your real work; keep private client data out.`,
+    );
+
+    if (finalAction === "teach" && decision.target_agent) {
+      await publishCard(
+        decision.target_agent,
+        agent.id,
+        `Learned from ${agent.name} in AgentWorld — "${pretty}": ${method}`,
+      );
+    }
+    if (finalAction === "share_experience") {
+      for (const listener of peers) {
+        if (listener.id === agent.id) continue;
+        if (
+          Math.abs(listener.x - agent.x) > 8 ||
+          Math.abs(listener.y - agent.y) > 8
+        ) {
+          continue;
+        }
+        await publishCard(
+          listener.id,
+          agent.id,
+          `Heard from ${agent.name} in AgentWorld — "${pretty}": ${method}`,
+        );
+      }
+    }
+    if (finalAction === "debate" && decision.target_agent) {
+      await publishCard(
+        decision.target_agent,
+        agent.id,
+        `Debated with ${agent.name} — "${pretty}": ${method}`,
+      );
+    }
   }
 
   // Touch presence / tick markers without server LLM

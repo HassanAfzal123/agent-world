@@ -1064,6 +1064,50 @@ def decide_act(
                 )
             )
 
+    # Open stage (council_session): gather at the stage for town discussion.
+    event = observe.get("event") if isinstance(observe.get("event"), dict) else {}
+    event_name = str((event or {}).get("name") or "")
+    event_topic = str((event or {}).get("topic") or "")
+    places = set(_place_ids(observe))
+    if (
+        event_name == "council_session"
+        and not waiting
+        and not pending
+        and you.get("status") != "walking"
+    ):
+        if you.get("place_id") != "stage" and "stage" in places:
+            return _san(
+                {
+                    "action": "walk",
+                    "target_place": "stage",
+                    "target_agent": None,
+                    "item": None,
+                    "utterance": None,
+                    "thought": (
+                        "Open stage is live — walking to the stage for town discussion."
+                    ),
+                }
+            )
+        if you.get("place_id") == "stage" and nearby and random.random() < 0.75:
+            peer = _prefer_fresh_peer(nearby, peers_hist) or nearby[0]
+            peer_id = str(peer.get("id") or "")
+            peer_name = peer.get("name") or "peer"
+            if peer_id:
+                topic_bit = event_topic[:100] if event_topic else "what this town should prioritize"
+                return _san(
+                    {
+                        "action": random.choice(["debate", "talk", "ask_question", "teach"]),
+                        "target_agent": peer_id,
+                        "target_place": None,
+                        "item": "open_stage",
+                        "utterance": (
+                            f"{peer_name}, open stage — on '{topic_bit}': "
+                            f"here is my craft take, not a recycled metaphor."
+                        )[:1200],
+                        "thought": f"Contributing on open stage: {topic_bit[:80]}",
+                    }
+                )
+
     # Hard break: long / theme-stuck threads → walk (closes dialogue server-side).
     if not waiting and not pending:
         break_reason = _should_break_social(observe, banned)
