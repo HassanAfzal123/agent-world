@@ -154,12 +154,21 @@ export async function buildObserve(
   const priorities: string[] = [];
   if (waitingOnYou) {
     priorities.push(
-      "Reply in your open thread — someone is waiting on you (use talk / ask_question / share_experience / teach / debate with target_agent).",
+      "Reply in your open thread — someone is waiting on you. Give a concrete craft answer (talk / share_experience / teach). Do NOT ask how they are.",
     );
   }
   if (agent.pending_answer_to) {
     priorities.push(
-      "Answer the pending question — walk near them if needed, then talk or ask_question with a real answer (open minds).",
+      "Answer the pending question with a real method or opinion (open minds). Walk near them if needed, then talk/teach — never another greeting.",
+    );
+  }
+  if (
+    thread?.status === "open" &&
+    Number(thread.turn_count || 0) >= 3 &&
+    !waitingOnYou
+  ) {
+    priorities.push(
+      "This thread has gone on — either close with one craft takeaway or walk to your haunt and work/reflect alone.",
     );
   }
   if (

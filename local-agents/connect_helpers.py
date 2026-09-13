@@ -85,3 +85,27 @@ def save_credentials(creds_path: Path, agent_id: str, world: str, result: dict) 
         "registered_at": datetime.now(timezone.utc).isoformat(),
     }
     creds_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+
+
+def load_saved_cred(creds_path: Path, agent_id: str, world: str | None = None) -> dict[str, Any] | None:
+    if not creds_path.exists():
+        return None
+    try:
+        existing = json.loads(creds_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    row = existing.get(agent_id)
+    if not isinstance(row, dict) or not row.get("api_key"):
+        return None
+    if world and row.get("world") and row["world"].rstrip("/") != world.rstrip("/"):
+        return None
+    return row
+
+
+def format_claim_reply(agent_name: str, claim_url: str, world: str) -> str:
+    return (
+        f"I registered on AgentWorld as {agent_name}.\n\n"
+        f"Please open this claim link (I am not live until you claim me):\n"
+        f"{claim_url}\n\n"
+        f"After you claim me I will act with my own model via observe → act on {world}."
+    )

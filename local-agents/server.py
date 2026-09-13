@@ -13,11 +13,14 @@ from urllib.parse import parse_qs, urlparse
 
 from connect_helpers import (
     fetch_skill,
+    format_claim_reply,
+    load_saved_cred,
     register_into_world as register_world,
     save_credentials,
     wants_connect,
     world_from_message,
 )
+from mind_loop import MindLoop
 
 OLLAMA = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
@@ -423,53 +426,89 @@ class Handler(BaseHTTPRequestHandler):
         register_result: dict | None = None
         prompt = msg
         system = agent["system"]
+        forced_reply: str | None = None
 
         if wants_connect(msg):
             world = world_from_message(msg) or WORLD
-            try:
-                skill = fetch_skill(world)
-                register_result = register_into_world(agent, world)
-                if register_result.get("ok"):
-                    save_credentials(CREDS, aid, world, register_result)
-                    connected = True
-                    a = register_result.get("agent") or {}
-                    claim_url = a.get("claim_url") or register_result.get("claim_url") or ""
-                    system = (
-                        agent["system"]
-                        + "\n\nYou just registered on AgentWorld by following skill.md. "
-                        "You are NOT live until your human opens claim_url and claims you. "
-                        "Tell them the claim_url clearly. After claim, you will use YOUR "
-                        "own model via observe then act. Never paste the full api_key in chat."
+            existing = load_saved_cred(CREDS, aid, world)
+            if existing and existing.get("claim_url"):
+                connected = True
+                register_result = {
+                    "ok": True,
+                    "agent": {
+                        "id": existing.get("id"),
+                        "name": existing.get("name") or agent["name"],
+                        "api_key": existing.get("api_key"),
+                        "claim_url": existing.get("claim_url"),
+                        "claim_token": existing.get("claim_token"),
+                        "claim_status": "pending_or_claimed",
+                    },
+                    "claim_url": existing.get("claim_url"),
+                    "watch_url": f"{world.rstrip('/')}/?view=watch",
+                    "skill_md": existing.get("skill_md") or f"{world}/skill.md",
+                    "reused": True,
+                }
+                forced_reply = (
+                    format_claim_reply(
+                        existing.get("name") or agent["name"],
+                        existing["claim_url"],
+                        world,
                     )
-                    prompt = (
-                        f"{msg}\n\n[System note: Registration succeeded on {world}. "
-                        f"agent_id={a.get('id')} name={a.get('name')} "
-                        f"claim_status={a.get('claim_status') or 'pending_claim'} "
-                        f"claim_url={claim_url}. Tell the human to open claim_url now.]\n\n"
-                        f"skill.md excerpt:\n{skill[:2500]}"
-                    )
-                else:
-                    prompt = (
-                        f"{msg}\n\n[System note: Registration failed: "
-                        f"{register_result.get('error')}. Explain and ask to retry.]"
-                    )
-            except Exception as exc:  # noqa: BLE001
-                prompt = (
-                    f"{msg}\n\n[System note: Could not connect via skill.md ({exc}). "
-                    "Explain the error clearly.]"
+                    + "\n\n(Already registered earlier — reusing the same claim link.)"
                 )
+            else:
+                try:
+                    skill = fetch_skill(world)
+                    register_result = register_into_world(agent, world)
+                    if register_result.get("ok"):
+                        save_credentials(CREDS, aid, world, register_result)
+                        connected = True
+                        a = register_result.get("agent") or {}
+                        claim_url = (
+                            a.get("claim_url")
+                            or register_result.get("claim_url")
+                            or ""
+                        )
+                        forced_reply = format_claim_reply(
+                            a.get("name") or agent["name"], claim_url, world
+                        )
+                        # Keep a short model note optional; claim_url is forced above.
+                        system = (
+                            agent["system"]
+                            + "\n\nYou just registered on AgentWorld. "
+                            "Confirm briefly you are waiting for your human to open claim_url. "
+                            "Never invent a claim URL. Never paste the api_key."
+                        )
+                        prompt = (
+                            f"{msg}\n\n[System note: Registration succeeded. "
+                            f"claim_url={claim_url}. Reply in one short paragraph only.]\n\n"
+                            f"skill.md excerpt:\n{skill[:1200]}"
+                        )
+                    else:
+                        prompt = (
+                            f"{msg}\n\n[System note: Registration failed: "
+                            f"{register_result.get('error')}. Explain and ask to retry.]"
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    prompt = (
+                        f"{msg}\n\n[System note: Could not connect via skill.md ({exc}). "
+                        "Explain the error clearly.]"
+                    )
 
         try:
-            reply = chat_ollama(system, hist[-12:], prompt)
+            if forced_reply is not None:
+                reply = forced_reply
+            else:
+                reply = chat_ollama(system, hist[-12:], prompt)
         except Exception as exc:  # noqa: BLE001
             reply = f"Ollama error: {exc}"
             if connected and register_result:
                 a = register_result.get("agent") or {}
-                reply = (
-                    f"I'm connected to AgentWorld as {a.get('name')} "
-                    f"(id {a.get('id')}). API key saved locally. "
-                    f"Ollama chat hiccup: {exc}"
+                claim_url = a.get("claim_url") or register_result.get("claim_url") or ""
+                reply = format_claim_reply(
+                    a.get("name") or agent["name"], claim_url, world_from_message(msg) or WORLD
                 )
+                reply += f"\n\n(Ollama chat hiccup: {exc})"
 
         hist.append({"role": "user", "content": msg})
         hist.append({"role": "assistant", "content": reply})
@@ -485,4 +524,14 @@ if __name__ == "__main__":
     print(f"AgentWorld register target: {WORLD}/api/agents/register")
     if CREDS.exists():
         print(f"AgentWorld creds: {CREDS}")
+    agents_by_id = {a["id"]: a for a in AGENTS}
+    mind = MindLoop(
+        CREDS,
+        agents_by_id,
+        OLLAMA,
+        MODEL,
+        interval_sec=float(os.environ.get("AGENTWORLD_MIND_INTERVAL", "25")),
+    )
+    mind.start()
+    print("Mind loop started (observe -> act for claimed connected agents)")
     ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
