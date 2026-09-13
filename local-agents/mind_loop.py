@@ -361,7 +361,13 @@ def _is_greeting_utterance(text: str | None) -> bool:
 
 
 def _place_ids(observe: dict[str, Any]) -> list[str]:
-    return [str(p.get("id")) for p in (observe.get("places") or []) if p.get("id")]
+    out: list[str] = []
+    for p in observe.get("places") or []:
+        if isinstance(p, dict) and p.get("id"):
+            out.append(str(p["id"]))
+        elif isinstance(p, str) and p.strip():
+            out.append(p.strip())
+    return out
 
 
 def _object_ids_here(observe: dict[str, Any]) -> list[str]:
@@ -780,7 +786,8 @@ def _sanitize_decision(
         preferred = _prefer_fresh_peer(nearby, recent_peers or [])
         if preferred and preferred.get("id") and not waiting and not pending:
             pref_id = str(preferred["id"])
-            if peer and peer in {str(p.get("id")) for p in (recent_peers or [])[-2:]}:
+            recent_ids = {str(p) for p in (recent_peers or [])[-2:]}
+            if peer and peer in recent_ids:
                 if pref_id != peer and random.random() < 0.65:
                     peer = pref_id
         if not peer or peer == you_id:
@@ -875,7 +882,10 @@ def _substantive_reply(
             agent_name, observe, "Wanted to answer but no peer nearby."
         )
     nearby = observe.get("nearby") or []
-    peer_row = next((n for n in nearby if str(n.get("id")) == peer), None) or {}
+    peer_row = next(
+        (n for n in nearby if isinstance(n, dict) and str(n.get("id")) == peer),
+        None,
+    ) or {}
     peer_name = peer_row.get("name") or "friend"
     q = (question or "what you said").strip()[:80]
     return {
@@ -919,8 +929,11 @@ def _slim_observe(observe: dict[str, Any]) -> dict[str, Any]:
                 "status": n.get("status"),
             }
             for n in nearby[:6]
+            if isinstance(n, dict)
         ],
-        "nearby_ids_only": [n.get("id") for n in nearby[:6] if n.get("id")],
+        "nearby_ids_only": [
+            n.get("id") for n in nearby[:6] if isinstance(n, dict) and n.get("id")
+        ],
         "in_sight": [
             {
                 "id": n.get("id"),
@@ -968,7 +981,7 @@ def _slim_observe(observe: dict[str, Any]) -> dict[str, Any]:
 
 def _approach_peer(observe: dict[str, Any]) -> dict[str, Any] | None:
     """Navigation only — never invents dialogue topics."""
-    in_sight = observe.get("in_sight") or []
+    in_sight = [n for n in (observe.get("in_sight") or []) if isinstance(n, dict)]
     places = set(_place_ids(observe))
     if not in_sight:
         return None
@@ -1024,8 +1037,8 @@ def decide_act(
     waiting = bool(inbox.get("waiting_on_you"))
     pending = inbox.get("pending_answer") or {}
     greeting_loop = _is_greeting_loop(bodies)
-    nearby = list(observe.get("nearby") or [])
-    in_sight = observe.get("in_sight") or []
+    nearby = [n for n in list(observe.get("nearby") or []) if isinstance(n, dict)]
+    in_sight = [n for n in list(observe.get("in_sight") or []) if isinstance(n, dict)]
     random.shuffle(nearby)
 
     def _san(d: dict[str, Any]) -> dict[str, Any]:

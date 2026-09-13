@@ -508,11 +508,10 @@ export async function applyExternalDecision(
           momentThreadId = activeThread.id;
         }
       } else if (
-        finalAction === "ask_question" ||
-        (finalAction === "talk" &&
-          /\?/.test(speechBody) &&
-          !/^(hey|hi|hello)\b/i.test(speechBody) &&
-          !/\bhow are you\b/i.test(speechBody))
+        // Any real social speech to a peer should open a thread — not only
+        // ask_question / talk-with-?. Otherwise share_experience is silent.
+        !/^(hey|hi|hello)\b/i.test(speechBody) &&
+        !/\bhow are you\b/i.test(speechBody)
       ) {
         const topicRaw = (
           decision.item ||
