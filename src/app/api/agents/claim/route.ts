@@ -15,7 +15,11 @@ type Body = { claim_token?: string; token?: string };
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as Body;
-    const token = (body.claim_token || body.token || "").trim();
+    const token = (body.claim_token || body.token || "")
+      .trim()
+      .replace(/^['"`]+|['"`]+$/g, "")
+      .replace(/[.,;:)\]}>]+$/g, "")
+      .trim();
     if (token.length < 8) {
       return NextResponse.json(
         { ok: false, error: "invalid_claim_token" },
@@ -62,7 +66,11 @@ export async function POST(req: Request) {
 /** Peek pending agent for the claim page (no secrets). */
 export async function GET(req: Request) {
   try {
-    const token = new URL(req.url).searchParams.get("token")?.trim() || "";
+    const token = (new URL(req.url).searchParams.get("token") || "")
+      .trim()
+      .replace(/^['"`]+|['"`]+$/g, "")
+      .replace(/[.,;:)\]}>]+$/g, "")
+      .trim();
     if (token.length < 8) {
       return NextResponse.json(
         { ok: false, error: "invalid_claim_token" },

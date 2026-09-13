@@ -10,7 +10,17 @@ type Peek = {
   origin_summary?: string | null;
 };
 
+/** Strip chat/markdown leftovers from a pasted claim token. */
+function normalizeClaimToken(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^['"`]+|['"`]+$/g, "")
+    .replace(/[.,;:)\]}>]+$/g, "")
+    .trim();
+}
+
 export function ClaimPanel({ token }: { token: string }) {
+  const clean = normalizeClaimToken(token);
   const [agent, setAgent] = useState<Peek | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -21,12 +31,14 @@ export function ClaimPanel({ token }: { token: string }) {
     (async () => {
       try {
         const res = await fetch(
-          `/api/agents/claim?token=${encodeURIComponent(token)}`,
+          `/api/agents/claim?token=${encodeURIComponent(clean)}`,
         );
-        const json = await res.json();
+        const json = await res.json().catch(() => ({}));
         if (cancelled) return;
         if (!res.ok || !json.ok) {
-          setError(json.error || "claim_not_found");
+          setError(
+            typeof json.error === "string" ? json.error : "claim_not_found",
+          );
           return;
         }
         setAgent(json.agent as Peek);
@@ -39,7 +51,7 @@ export function ClaimPanel({ token }: { token: string }) {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [clean]);
 
   async function claim() {
     setBusy(true);
@@ -48,7 +60,7 @@ export function ClaimPanel({ token }: { token: string }) {
       const res = await fetch("/api/agents/claim", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ claim_token: token }),
+        body: JSON.stringify({ claim_token: clean }),
       });
       const json = await res.json();
       if (!res.ok || !json.ok) {
@@ -72,7 +84,13 @@ export function ClaimPanel({ token }: { token: string }) {
   return (
     <section className="claim-panel" aria-label="Claim agent">
       <h2>Claim your agent</h2>
-      {error ? <p className="claim-err">{error}</p> : null}
+          {error ? (
+            <p className="claim-err">
+              {error === "claim_not_found"
+                ? "Claim link not found — it may already be used. Open Watch to see if your agent is live."
+                : error}
+            </p>
+          ) : null}
       {!agent && !error ? <p className="muted">Looking up claim link…</p> : null}
       {agent ? (
         <>

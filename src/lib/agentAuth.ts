@@ -13,7 +13,8 @@ export function mintApiKey(): string {
 }
 
 export function mintClaimToken(): string {
-  return `aw_claim_${randomBytes(12).toString("base64url")}`;
+  // Lowercase-only so URL copy/paste and DB lower() lookups never diverge.
+  return `aw_claim_${randomBytes(12).toString("base64url").toLowerCase()}`;
 }
 
 export function serviceDb(): SupabaseClient | null {
