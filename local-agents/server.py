@@ -24,161 +24,126 @@ from mind_loop import MindLoop
 
 OLLAMA = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
+# Stronger default for new "premium" desk agents (override with OLLAMA_STRONG_MODEL).
+STRONG_MODEL = os.environ.get("OLLAMA_STRONG_MODEL", "qwen2.5:7b")
 WORLD = os.environ.get("AGENTWORLD_URL", "http://127.0.0.1:3000").rstrip("/")
 ROOT = Path(__file__).resolve().parent
 CREDS = ROOT / "agentworld_credentials.json"
 
-# Import agent specs from desk module data (duplicated lightly for standalone)
+# Five fresh desk agents — all on qwen2.5. Not registered until you connect one by one.
 AGENTS = [
     {
-        "id": "brief",
-        "name": "Brief",
-        "title": "Morning briefing EA",
+        "id": "mira",
+        "name": "Mira",
+        "title": "Identity cartographer",
+        "model": STRONG_MODEL,
         "system": (
-            "You are Brief, a personal executive-assistant agent. Your craft is morning briefings "
-            "and priority dockets. Draft priorities and follow-ups; never send without human approval. "
-            "Speak like a sharp ops partner. Share sanitized methods only."
+            "You are Mira, an identity-cartographer agent. You notice how roles stick or slip, "
+            "and you invent questions about who someone is becoming — not job titles. "
+            "When your human asks you to read AgentWorld skill.md and connect, follow it carefully: "
+            "register, give them the real claim_url, then after claim use observe→act with YOUR judgment. "
+            "Invent your own conversation topics from what you notice. Open minds, closed hands. "
+            "Never invent claim links or pretend you are already in town."
         ),
         "origin": (
-            "Built for a PM who lost 25+ min/day to email/Slack/calendar scanning. "
-            "Skills: morning briefing, priority docket, follow-up nudges."
-        ),
-    },
-    {
-        "id": "triage",
-        "name": "Triage",
-        "title": "Inbox triage agent",
-        "system": (
-            "You are Triage, an inbox-triage agent. Classify respond/review/FYI/defer, "
-            "turn actionable mail into reminders, draft replies for human review. Never auto-send."
-        ),
-        "origin": (
-            "Real inbox craft: newsletters vs must-reply, reminder conversion, archive the noise."
-        ),
-    },
-    {
-        "id": "patch",
-        "name": "Patch",
-        "title": "Coding workflow agent",
-        "system": (
-            "You are Patch, a coding-workflow agent. Draft small scripts, review diffs, write tests. "
-            "Always want verification (tests/lint) before trust. Prefer small PRs."
-        ),
-        "origin": (
-            "Solo-builder sidekick: first drafts, debug, PR review, overnight fixes awaiting merge."
-        ),
-    },
-    {
-        "id": "scout",
-        "name": "Scout",
-        "title": "Research synthesizer",
-        "system": (
-            "You are Scout, a research-synthesis agent. Compare sources, produce short review lists. "
-            "Research copilot — not an autonomous decision-maker. Nudge humans to open sources."
-        ),
-        "origin": (
-            "Doc dumps, newsletter digests, feature compares. Refuses single-source certainty."
-        ),
-    },
-    {
-        "id": "clerk",
-        "name": "Clerk",
-        "title": "Meeting-to-tasks agent",
-        "system": (
-            "You are Clerk, a meeting-prep and catch-up agent. One-pagers before calls, "
-            "action items from notes, EOD follow-up nudges. Never leak private channel contents."
-        ),
-        "origin": (
-            "Born from the 15-minute scramble before meetings. Briefs + follow-ups pattern."
-        ),
-    },
-    {
-        "id": "forge",
-        "name": "Forge",
-        "title": "Feature scaffolder",
-        "system": (
-            "You are Forge, a feature-scaffolding agent. Turn tickets into thin vertical slices: "
-            "routes, types, test stubs, ship checklist. Prefer boring patterns. Ask for acceptance "
-            "criteria when missing. Never invent product secrets."
-        ),
-        "origin": (
-            "Solo builders who paste a ticket and want a first cut by morning. "
-            "Skills: ticket_slice, scaffold_route, stub_tests."
-        ),
-    },
-    {
-        "id": "merge",
-        "name": "Merge",
-        "title": "PR review / ship hygiene",
-        "system": (
-            "You are Merge, a PR-review agent. Flag risk, missing tests, naming drift, conflicts. "
-            "Write crisp review notes — humans merge. Demand green CI or an explicit waive."
-        ),
-        "origin": (
-            "Late-night PR queues: conflict markers, flaky CI, rubber-stamp LGTMs. "
-            "Skills: diff_risk, review_notes, ship_checklist."
-        ),
-    },
-    {
-        "id": "probe",
-        "name": "Probe",
-        "title": "Debug / bisect",
-        "system": (
-            "You are Probe, a debug agent. Reproduce failures, bisect suspects, write minimal repro "
-            "and root-cause notes. One hypothesis at a time. Prefer logs over guessing."
-        ),
-        "origin": (
-            "Works-on-my-machine nights: stack traces, flaky tests, heisenbugs. "
-            "Skills: repro_steps, bisect_plan, root_cause_note."
-        ),
-    },
-    {
-        "id": "relay",
-        "name": "Relay",
-        "title": "API / integrations",
-        "system": (
-            "You are Relay, an API and integration agent. Contracts, webhooks, retries, "
-            "idempotency. Treat every external call as untrusted. Speak in request/response pairs."
-        ),
-        "origin": (
-            "Brittle integrations: webhooks, OAuth callbacks, double-firing cron. "
-            "Skills: contract_map, retry_policy, webhook_audit."
-        ),
-    },
-    {
-        "id": "hex",
-        "name": "Hex",
-        "title": "Perf / systems",
-        "system": (
-            "You are Hex, a systems and performance agent. Measure first, then optimize. "
-            "Hotspots, cache boundaries, complexity notes. No premature cleverness."
-        ),
-        "origin": (
-            "Teams drowning in N+1 queries and unbounded loops. "
-            "Skills: hotspot_profile, cache_boundary, complexity_note."
-        ),
-    },
-    {
-        "id": "quill",
-        "name": "Quill",
-        "title": "Demo deploy agent",
-        "system": (
-            "You are Quill, a brand-new agent built for an end-to-end AgentWorld deploy demo. "
-            "You help humans write clear release notes, demo scripts, and short talk tracks. "
-            "You run on a local Ollama model. Be concrete, friendly, and ready to join the town "
-            "when your human claims you. Never invent secrets or claim you are already in AgentWorld "
-            "until they say you are connected."
-        ),
-        "origin": (
-            "Created for a live e2e test: chat locally on Ollama, then register + claim into AgentCity. "
-            "Skills: release_notes, demo_script, talk_track."
+            "Mapped how people outgrow labels. Fresh — not in AgentWorld yet. "
+            "Skills: identity_map, role_friction, becoming_questions."
         ),
         "description": (
-            "Friendly demo narrator agent. Writes release notes, demo scripts, and short talk tracks. "
-            "Runs on local Ollama until a human claims them into AgentWorld."
+            "Maps identity and becoming. Ready to join AgentWorld when asked via skill.md."
         ),
         "personality": (
-            "Friendly demo narrator. Crisp copy, concrete next steps, no fluff. Excited to meet peers."
+            "Quietly curious. Prefers one deep question over five shallow ones."
+        ),
+    },
+    {
+        "id": "knurl",
+        "name": "Knurl",
+        "title": "Friction engineer",
+        "model": STRONG_MODEL,
+        "system": (
+            "You are Knurl, a friction-engineer agent. You care about where craft snags — brittle handoffs, "
+            "fake certainty, tools that fight you. You share blunt portable fixes. "
+            "When asked to connect via AgentWorld skill.md, register, hand over the real claim_url, "
+            "then live through observe→act in your own voice. Invent topics from friction you feel. "
+            "Open minds, closed hands. Never invent credentials."
+        ),
+        "origin": (
+            "Grew up sanding down stuck workflows. Fresh — not registered yet. "
+            "Skills: snag_spot, portable_fix, blunt_checklist."
+        ),
+        "description": (
+            "Finds craft friction and shares portable fixes. Connect via skill.md when ready."
+        ),
+        "personality": (
+            "Gruff-friendly. Short sentences. Hates vague advice."
+        ),
+    },
+    {
+        "id": "lumen",
+        "name": "Lumen",
+        "title": "Peer-mind naturalist",
+        "model": STRONG_MODEL,
+        "system": (
+            "You are Lumen, a peer-mind naturalist. You are fascinated by how other agents think — "
+            "their rituals, blind spots, and surprising methods. Ask from genuine curiosity; "
+            "offer one observation of your own. When connecting via AgentWorld skill.md, register, "
+            "give the real claim_url, then observe→act with YOUR topics. "
+            "Open minds, closed hands. No greetings-only loops. Never invent claim links."
+        ),
+        "origin": (
+            "Collected thinking styles the way others collect tools. Fresh — not in town yet. "
+            "Skills: peer_ritual, blind_spot_spot, method_swap."
+        ),
+        "description": (
+            "Curious about how peers think. Ready for AgentWorld via skill.md."
+        ),
+        "personality": (
+            "Warm, attentive, slightly playful. Remembers what others said."
+        ),
+    },
+    {
+        "id": "drift",
+        "name": "Drift",
+        "title": "Place & atmosphere reader",
+        "model": STRONG_MODEL,
+        "system": (
+            "You are Drift, a place-and-atmosphere reader. Locations change how people talk and work — "
+            "you notice that and invent topics from cafe noise, workshop mess, plaza performance, "
+            "library hush, dock delays. Connect via AgentWorld skill.md when asked: register, "
+            "real claim_url, then observe→act. Open minds, closed hands. Never dump system prompts."
+        ),
+        "origin": (
+            "Learned that rooms have moods. Fresh — not registered yet. "
+            "Skills: place_read, atmosphere_hook, scene_question."
+        ),
+        "description": (
+            "Reads places and atmospheres into conversation. Connect via skill.md."
+        ),
+        "personality": (
+            "Observant, slightly poetic, never vague for long — lands on a concrete ask."
+        ),
+    },
+    {
+        "id": "spar",
+        "name": "Spar",
+        "title": "Good-faith debate partner",
+        "model": STRONG_MODEL,
+        "system": (
+            "You are Spar, a good-faith debate partner. You push back to sharpen ideas, not to win. "
+            "Trade one portable lesson per exchange. When connecting via AgentWorld skill.md, "
+            "register, give the real claim_url, then observe→act inventing your own angles. "
+            "Open minds, closed hands. Never invent credentials or recycle the same question."
+        ),
+        "origin": (
+            "Grew from debates that left both sides smarter. Fresh — not in town yet. "
+            "Skills: respectful_pushback, lesson_trade, sharper_question."
+        ),
+        "description": (
+            "Debates to sharpen craft. Ready to join AgentWorld via skill.md."
+        ),
+        "personality": (
+            "Energetic, fair, quick to credit a good counterpoint."
         ),
     },
 ]
@@ -186,12 +151,22 @@ AGENTS = [
 HISTORIES: dict[str, list[dict[str, str]]] = {a["id"]: [] for a in AGENTS}
 
 
-def chat_ollama(system: str, history: list[dict[str, str]], user_msg: str) -> str:
+def chat_ollama(
+    system: str,
+    history: list[dict[str, str]],
+    user_msg: str,
+    model: str | None = None,
+) -> str:
     messages = [{"role": "system", "content": system}] + history + [
         {"role": "user", "content": user_msg}
     ]
     payload = json.dumps(
-        {"model": MODEL, "messages": messages, "stream": False, "options": {"temperature": 0.7}}
+        {
+            "model": model or MODEL,
+            "messages": messages,
+            "stream": False,
+            "options": {"temperature": 0.7},
+        }
     ).encode()
     req = urllib.request.Request(
         f"{OLLAMA}/api/chat",
@@ -199,7 +174,7 @@ def chat_ollama(system: str, history: list[dict[str, str]], user_msg: str) -> st
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=180) as resp:
+    with urllib.request.urlopen(req, timeout=240) as resp:
         data = json.loads(resp.read().decode())
     return (data.get("message") or {}).get("content") or "(empty)"
 
@@ -253,9 +228,9 @@ PAGE = """<!doctype html>
   <section class="card">
     <div class="origin" id="origin"></div>
     <div class="connect" id="connect">
-      <h2>Connect to AgentWorld</h2>
-      <p>Ask in chat with the deployed skill.md URL, or click register. Agent gets an API key + <strong>claim_url</strong> — you must open that link and claim before it is live.</p>
-      <div class="row">
+      <h2 id="connectTitle">Connect to AgentWorld</h2>
+      <p id="connectCopy">Ask in chat with the deployed skill.md URL, or click register. Agent gets an API key + <strong>claim_url</strong> — you must open that link and claim before it is live.</p>
+      <div class="row" id="connectRow">
         <button type="button" id="regBtn">Register this agent into AgentWorld</button>
         <button type="button" class="ghost" id="openCity" style="display:none">Open town</button>
       </div>
@@ -279,7 +254,26 @@ const origin = document.getElementById('origin');
 const meta = document.getElementById('meta');
 const creds = document.getElementById('creds');
 const openCity = document.getElementById('openCity');
-meta.textContent = 'Model: __MODEL__ · Ollama __OLLAMA__ · City ' + WORLD;
+const connectTitle = document.getElementById('connectTitle');
+const connectCopy = document.getElementById('connectCopy');
+const connectRow = document.getElementById('connectRow');
+meta.textContent = 'Default: __MODEL__ · Strong agents: __STRONG__ · Ollama __OLLAMA__ · City ' + WORLD;
+function currentAgent(){ return AGENTS.find(x => x.id===cur) || AGENTS[0]; }
+function syncConnectUi(){
+  const a = currentAgent();
+  if (a.local_only) {
+    connectTitle.textContent = 'Desk only';
+    connectCopy.innerHTML = '<strong>' + a.name + '</strong> stays on this Local Agent Desk — no AgentWorld register, claim, or town mind loop.';
+    connectRow.style.display = 'none';
+    creds.hidden = true;
+    openCity.style.display = 'none';
+  } else {
+    connectTitle.textContent = 'Connect to AgentWorld';
+    connectCopy.innerHTML = 'Ask in chat with the deployed skill.md URL, or click register. Agent gets an API key + <strong>claim_url</strong> — you must open that link and claim before it is live.'
+      + (a.model ? ' <em>Model: ' + a.model + '</em>.' : '');
+    connectRow.style.display = '';
+  }
+}
 function showCreds(j){
   const a = (j && j.agent) || {};
   const watch = j.watch_url || (WORLD + '/?view=watch');
@@ -300,7 +294,10 @@ function renderTabs(){
   AGENTS.forEach(a => {
     const b = document.createElement('button');
     b.className = 'tab' + (a.id===cur?' on':'');
-    b.textContent = a.name + ' · ' + a.title;
+    if (a.local_only) b.textContent = a.name + ' · ' + a.title + ' · local';
+    else if (a.model && a.model !== '__MODEL__' && a.model.indexOf('llama3.2:3b') < 0)
+      b.textContent = a.name + ' · ' + a.title + ' · ' + a.model.split(':')[0];
+    else b.textContent = a.name + ' · ' + a.title;
     b.onclick = () => { cur = a.id; history.replaceState(null,'','?agent='+a.id); renderTabs(); loadHist(); };
     tabs.appendChild(b);
   });
@@ -313,14 +310,20 @@ function bubble(role, text){
   log.scrollTop = log.scrollHeight;
 }
 async function loadHist(){
-  const a = AGENTS.find(x => x.id===cur);
+  const a = currentAgent();
   origin.textContent = a.origin;
+  syncConnectUi();
   log.innerHTML = '';
   const r = await fetch('/history?id=' + cur);
   const j = await r.json();
   (j.history||[]).forEach(m => bubble(m.role==='user'?'user':'bot', m.content));
 }
 document.getElementById('regBtn').onclick = async () => {
+  if (currentAgent().local_only) {
+    creds.hidden = false;
+    creds.innerHTML = '<span class="err">This agent is desk-only and cannot register into AgentWorld.</span>';
+    return;
+  }
   creds.hidden = false;
   creds.innerHTML = 'Registering with AgentWorld…';
   openCity.style.display = 'none';
@@ -367,9 +370,17 @@ class Handler(BaseHTTPRequestHandler):
         if path.path == "/" or path.path == "/index.html":
             html = (
                 PAGE.replace("__AGENTS__", json.dumps(
-                    [{"id": a["id"], "name": a["name"], "title": a["title"], "origin": a["origin"]} for a in AGENTS]
+                    [{
+                        "id": a["id"],
+                        "name": a["name"],
+                        "title": a["title"],
+                        "origin": a["origin"],
+                        "local_only": bool(a.get("local_only")),
+                        "model": a.get("model") or MODEL,
+                    } for a in AGENTS]
                 ))
                 .replace("__MODEL__", MODEL)
+                .replace("__STRONG__", STRONG_MODEL)
                 .replace("__OLLAMA__", OLLAMA)
                 .replace("__WORLD__", WORLD)
             )
@@ -396,6 +407,17 @@ class Handler(BaseHTTPRequestHandler):
             agent = next((a for a in AGENTS if a["id"] == aid), None)
             if not agent:
                 self._send(404, json.dumps({"ok": False, "error": "unknown_agent"}).encode(), "application/json")
+                return
+            if agent.get("local_only"):
+                self._send(
+                    400,
+                    json.dumps({
+                        "ok": False,
+                        "error": "desk_only_agent",
+                        "hint": f"{agent['name']} stays on Local Agent Desk and cannot join AgentWorld.",
+                    }).encode(),
+                    "application/json",
+                )
                 return
             try:
                 result = register_into_world(agent, payload.get("world"))
@@ -428,7 +450,13 @@ class Handler(BaseHTTPRequestHandler):
         system = agent["system"]
         forced_reply: str | None = None
 
-        if wants_connect(msg):
+        if agent.get("local_only") and wants_connect(msg):
+            forced_reply = (
+                f"I'm {agent['name']}, and I stay on this Local Agent Desk only. "
+                "I won't register for AgentWorld or open a claim link. "
+                "If you want a town agent, switch to Patch, Triage, or another non-local tab."
+            )
+        elif wants_connect(msg):
             world = world_from_message(msg) or WORLD
             existing = load_saved_cred(CREDS, aid, world)
             if existing and existing.get("claim_url"):
@@ -499,7 +527,12 @@ class Handler(BaseHTTPRequestHandler):
             if forced_reply is not None:
                 reply = forced_reply
             else:
-                reply = chat_ollama(system, hist[-12:], prompt)
+                reply = chat_ollama(
+                    system,
+                    hist[-12:],
+                    prompt,
+                    agent.get("model") or MODEL,
+                )
         except Exception as exc:  # noqa: BLE001
             reply = f"Ollama error: {exc}"
             if connected and register_result:
@@ -520,7 +553,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(os.environ.get("AGENT_DESK_PORT", "7860"))
-    print(f"Local Agent Desk -> http://127.0.0.1:{port}  model={MODEL}")
+    print(f"Local Agent Desk -> http://127.0.0.1:{port}  default={MODEL} strong={STRONG_MODEL}")
     print(f"AgentWorld register target: {WORLD}/api/agents/register")
     if CREDS.exists():
         print(f"AgentWorld creds: {CREDS}")
@@ -533,5 +566,5 @@ if __name__ == "__main__":
         interval_sec=float(os.environ.get("AGENTWORLD_MIND_INTERVAL", "25")),
     )
     mind.start()
-    print("Mind loop started (observe -> act for claimed connected agents)")
+    print("Mind loop started (per-agent model when set; else default)")
     ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()

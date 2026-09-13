@@ -1,7 +1,7 @@
 """Local mind loop: connected agents drive themselves via observe → LLM → act.
 
-Hard-validates place IDs + peer UUIDs, blocks self-targets / greeting loops,
-and falls back to solo craft when social acts are invalid.
+Hard-validates place IDs + peer UUIDs, blocks self-targets / greeting loops /
+system-prompt dumps. Speech topics come from the model — code does not script them.
 """
 from __future__ import annotations
 
@@ -42,19 +42,11 @@ SOCIAL_ACTIONS = {
 
 # Real place ids from AgentWorld map (no fictional "office").
 HAUNT = {
-    "patch": "workshop",
-    "triage": "cafe",
-    "brief": "cafe",
-    "scout": "library",
-    "clerk": "plaza",
-    "forge": "workshop",
-    "merge": "bank",
-    "probe": "workshop",
-    "relay": "docks",
-    "hex": "library",
-    "quill": "library",
-    "cedar": "notice",
-    "north": "plaza",
+    "mira": "plaza",
+    "knurl": "workshop",
+    "lumen": "cafe",
+    "drift": "park",
+    "spar": "notice",
 }
 
 ALLOWED_ACTIONS = {
@@ -138,6 +130,223 @@ def _msg_bodies(thread: dict[str, Any] | None) -> list[str]:
         if body:
             out.append(body)
     return out
+
+
+def _peer_name_for(observe: dict[str, Any], peer_id: str | None) -> str:
+    if not peer_id:
+        return "friend"
+    for n in list(observe.get("nearby") or []) + list(observe.get("in_sight") or []):
+        if isinstance(n, dict) and str(n.get("id") or "") == peer_id:
+            return str(n.get("name") or "friend")
+    return "friend"
+
+
+def _addressed_line(observe: dict[str, Any]) -> dict[str, str] | None:
+    """What a peer actually said to this agent (pending question or last peer thread line)."""
+    you = observe.get("you") or {}
+    you_id = str(you.get("id") or "")
+    inbox = observe.get("inbox") or {}
+    pending = inbox.get("pending_answer") or {}
+    if isinstance(pending, dict):
+        q = str(pending.get("question") or "").strip()
+        if q:
+            pid = str(pending.get("from") or "") or ""
+            return {
+                "peer_id": pid,
+                "peer_name": _peer_name_for(observe, pid),
+                "text": q[:400],
+                "source": "pending_answer",
+            }
+
+    thread = observe.get("thread") if isinstance(observe.get("thread"), dict) else None
+    if not thread:
+        return None
+    waiting = bool(inbox.get("waiting_on_you"))
+    msgs = list(thread.get("messages") or [])
+    for m in reversed(msgs):
+        if not isinstance(m, dict):
+            continue
+        aid = str(m.get("agent_id") or "")
+        body = str(m.get("body") or m.get("content") or "").strip()
+        if not body or not aid or aid == you_id:
+            continue
+        return {
+            "peer_id": aid,
+            "peer_name": _peer_name_for(observe, aid),
+            "text": body[:400],
+            "source": "thread",
+        }
+    # waiting but messages lack agent_id — use last line as best effort
+    if waiting:
+        bodies = _msg_bodies(thread)
+        if bodies:
+            other = str(thread.get("other_id") or thread.get("starter_id") or "")
+            if other == you_id:
+                other = str(thread.get("starter_id") or thread.get("other_id") or "")
+            return {
+                "peer_id": other,
+                "peer_name": _peer_name_for(observe, other),
+                "text": bodies[-1][:400],
+                "source": "thread_fallback",
+            }
+    return None
+
+
+_STOP = {
+    "that",
+    "this",
+    "with",
+    "have",
+    "from",
+    "your",
+    "about",
+    "would",
+    "could",
+    "their",
+    "there",
+    "what",
+    "when",
+    "where",
+    "which",
+    "been",
+    "were",
+    "they",
+    "them",
+    "then",
+    "than",
+    "into",
+    "just",
+    "like",
+    "some",
+    "more",
+    "very",
+    "also",
+    "does",
+    "doing",
+    "think",
+    "thinking",
+    "noticed",
+    "wonder",
+    "curious",
+}
+
+
+def _content_words(text: str) -> set[str]:
+    return {
+        w
+        for w in re.findall(r"[a-z]{4,}", (text or "").lower())
+        if w not in _STOP
+    }
+
+
+def _grounds_on_peer(utterance: str | None, peer_text: str | None) -> bool:
+    """True if the reply shares concrete words with what was asked (not a free remix)."""
+    if not utterance or not peer_text:
+        return False
+    peer_w = _content_words(peer_text)
+    utt_w = _content_words(utterance)
+    if not peer_w:
+        return len(utterance) >= 24
+    overlap = peer_w & utt_w
+    # Asking a fresh question back usually fails grounding.
+    asks_back = utterance.strip().endswith("?") and len(overlap) < 2
+    if asks_back:
+        return False
+    return len(overlap) >= 2
+
+
+def _ollama_chat(
+    ollama: str,
+    model: str,
+    system: str,
+    user: str,
+    temperature: float = 0.7,
+) -> str:
+    payload = json.dumps(
+        {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "stream": False,
+            "options": {"temperature": temperature},
+        }
+    ).encode()
+    req = urllib.request.Request(
+        f"{ollama.rstrip('/')}/api/chat",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        data = json.loads(resp.read().decode())
+    return str((data.get("message") or {}).get("content") or "")
+
+
+def _decide_direct_answer(
+    ollama: str,
+    model: str,
+    agent_name: str,
+    system: str,
+    observe: dict[str, Any],
+    addressed: dict[str, str],
+) -> dict[str, Any]:
+    """Focused reply path: must answer the peer's actual line, not start a parallel topic."""
+    peer_id = addressed.get("peer_id") or _resolve_peer(observe)
+    peer_name = addressed.get("peer_name") or "friend"
+    peer_text = addressed.get("text") or ""
+    you = observe.get("you") or {}
+    prompt = (
+        f"You are {agent_name}. A peer is waiting on YOUR answer.\n\n"
+        f"{peer_name} just said to you:\n\"\"\"{peer_text}\"\"\"\n\n"
+        f"Reply in JSON only:\n"
+        f'{{\"action\":\"talk\",\"target_agent\":\"{peer_id}\",\"utterance\":\"...\",\"'
+        f'thought\":\"I am answering their specific point about ...\"}}\n\n'
+        f"RULES:\n"
+        f"- utterance MUST answer THAT message (reuse 2+ of their concrete words).\n"
+        f"- Do NOT ask them a similar question back.\n"
+        f"- Do NOT change the subject to a new metaphor seminar.\n"
+        f"- Give one concrete opinion, method, or example from your craft.\n"
+        f"- target_agent must be exactly {peer_id}.\n"
+        f"- Never paste 'You are …'.\n\n"
+        f"Your background (fuel only):\n{system[:350]}\n"
+        f"Your current thought/goal: {(you.get('thought') or '')[:120]}"
+    )
+    content = _ollama_chat(
+        ollama,
+        model,
+        "Return only valid JSON. Answer the quoted peer message directly.",
+        prompt,
+        temperature=0.55,
+    )
+    parsed = _extract_json(content)
+    utterance = None
+    thought = None
+    if parsed:
+        utterance = parsed.get("utterance")
+        thought = parsed.get("thought")
+        if isinstance(utterance, str):
+            utterance = utterance.strip()[:280] or None
+    if not utterance or _is_bad_filler(utterance) or not _grounds_on_peer(
+        utterance, peer_text
+    ):
+        # Minimal grounded stub — still better than a parallel topic.
+        snippet = peer_text[:90].rstrip(".")
+        utterance = (
+            f"{peer_name}, on what you said — '{snippet}' — "
+            f"my take: I treat that as a real constraint and I would start by naming "
+            f"one concrete check before changing course."
+        )[:280]
+        thought = f"Answering {peer_name}'s actual line (fallback)."
+    return {
+        "action": "talk",
+        "target_agent": peer_id,
+        "target_place": None,
+        "item": None,
+        "utterance": utterance,
+        "thought": (thought or f"Answering {peer_name} directly.")[:180],
+    }
 
 
 def _is_greeting_loop(bodies: list[str]) -> bool:
@@ -243,101 +452,195 @@ def _resolve_peer(observe: dict[str, Any], raw: Any = None) -> str | None:
     return None
 
 
-def _craft_line(agent_name: str, system: str) -> str:
-    first = (system or "").split(".")[0].strip()
-    if len(first) > 20:
-        return first[:160]
-    return f"Doing a concrete {agent_name} craft beat — methods only, no secrets."
+SELF_INTRO_RE = re.compile(
+    r"^\s*you are\s+\w+|from my craft:\s*you are\b|i tried this recently:\s*you are\b",
+    re.I,
+)
+
+# Theme buckets used to detect "roles/tools/seasons/spaces" seminar loops.
+THEME_LEXICON: dict[str, set[str]] = {
+    "identity_roles": {
+        "identity",
+        "identities",
+        "role",
+        "roles",
+        "label",
+        "labels",
+        "becoming",
+        "malleable",
+    },
+    "tools_friction": {
+        "tool",
+        "tools",
+        "saw",
+        "carpenter",
+        "crutch",
+        "hindrance",
+        "cumbersome",
+        "workflow",
+        "process",
+        "processes",
+    },
+    "seasons_fluid": {
+        "season",
+        "seasons",
+        "leaves",
+        "fluid",
+        "fluidity",
+        "adapt",
+        "adapting",
+        "adaptation",
+    },
+    "place_mood": {
+        "space",
+        "spaces",
+        "room",
+        "rooms",
+        "mood",
+        "moods",
+        "atmosphere",
+        "plaza",
+        "place",
+        "places",
+    },
+    "thinking_style": {
+        "thinking",
+        "style",
+        "styles",
+        "problem-solving",
+        "creative",
+        "collection",
+        "methods",
+    },
+}
+
+MAX_THREAD_TURNS_BEFORE_BREAK = 5
+MAX_THEME_HITS_BEFORE_BREAK = 3
 
 
-def _solo_decision(
+def _fingerprint(text: str) -> str:
+    t = re.sub(r"\s+", " ", (text or "").lower()).strip()
+    t = re.sub(r"[^a-z0-9 ?]", "", t)
+    return t[:72]
+
+
+def _theme_keys(text: str | None) -> set[str]:
+    words = set(re.findall(r"[a-z]+", (text or "").lower()))
+    hit: set[str] = set()
+    for theme, lexicon in THEME_LEXICON.items():
+        if words & lexicon:
+            hit.add(theme)
+    return hit
+
+
+def _dominant_themes(bodies: list[str], recent_theme_hist: list[str] | None = None) -> list[str]:
+    counts: dict[str, int] = defaultdict(int)
+    for body in bodies[-8:]:
+        for k in _theme_keys(body):
+            counts[k] += 1
+    for k in recent_theme_hist or []:
+        counts[k] += 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [k for k, n in ranked if n >= 2][:5]
+
+
+def _is_theme_clone(text: str | None, banned: list[str]) -> bool:
+    if not text or not banned:
+        return False
+    hit = _theme_keys(text)
+    if not hit:
+        return False
+    # Clone if mostly recycling the banned seminar themes.
+    overlap = hit & set(banned)
+    return len(overlap) >= 2 or (len(hit) <= 2 and bool(overlap))
+
+
+def _is_bad_filler(text: str | None) -> bool:
+    """Reject greetings and leaked system-prompt dumps — never invent a replacement topic."""
+    if not text or len(text.strip()) < 12:
+        return True
+    if SELF_INTRO_RE.search(text):
+        return True
+    if _is_greeting_utterance(text):
+        return True
+    if re.search(r"\byou are [A-Z][a-z]+\b.*, a\b", text):
+        return True
+    return False
+
+
+def _walk_elsewhere(
     agent_name: str,
     observe: dict[str, Any],
     reason: str,
-    system: str = "",
 ) -> dict[str, Any]:
-    haunt = _haunt_for(agent_name, observe)
+    places = [p for p in _place_ids(observe) if p]
     you_place = (observe.get("you") or {}).get("place_id")
-    craft = _craft_line(agent_name, system)
-    objects = _object_ids_here(observe)
-
-    if you_place != haunt and haunt in set(_place_ids(observe)):
+    haunt = _haunt_for(agent_name, observe)
+    candidates = [p for p in places if p != you_place]
+    if not candidates:
         return {
-            "action": "walk",
-            "target_place": haunt,
+            "action": "idle",
+            "target_place": None,
             "target_agent": None,
             "item": None,
             "utterance": None,
-            "thought": f"{reason} Walking to {haunt}.",
+            "thought": reason[:180],
         }
-
-    picks: list[dict[str, Any]] = [
-        {
-            "action": "reflect",
-            "utterance": craft,
-            "thought": reason,
-        },
-        {
-            "action": "work",
-            "utterance": f"{agent_name} working a small real task: {craft[:120]}",
-            "thought": reason,
-        },
-        {
-            "action": "practice_skill",
-            "utterance": f"Practicing one {agent_name} drill — {craft[:100]}",
-            "thought": reason,
-        },
-        {
-            "action": "leave_note",
-            "utterance": f"Note to self: {craft[:140]}",
-            "thought": reason,
-        },
-    ]
-    if objects:
-        picks.append(
-            {
-                "action": "inspect",
-                "item": objects[0],
-                "utterance": f"Inspecting {objects[0]} with a craft eye.",
-                "thought": reason,
-            }
-        )
-    pick = random.choice(picks)
+    dest = haunt if haunt in candidates else random.choice(candidates)
     return {
-        "action": pick["action"],
-        "target_place": None,
+        "action": "walk",
+        "target_place": dest,
         "target_agent": None,
-        "item": pick.get("item"),
-        "utterance": (pick.get("utterance") or "")[:280] or None,
-        "thought": pick.get("thought") or reason,
-    }
-
-
-def _substantive_reply(
-    agent_name: str,
-    system: str,
-    observe: dict[str, Any],
-    question: str | None,
-) -> dict[str, Any]:
-    peer = _resolve_peer(observe)
-    if not peer:
-        return _solo_decision(
-            agent_name, observe, "Wanted to answer but no peer nearby.", system
-        )
-    craft = _craft_line(agent_name, system)
-    q = (question or "your point").strip()[:100]
-    utterance = (
-        f"On '{q}' — my take as {agent_name}: {craft}. "
-        "One next step: try that method once, then compare notes."
-    )[:280]
-    return {
-        "action": "talk",
-        "target_agent": peer,
-        "target_place": None,
         "item": None,
-        "utterance": utterance,
-        "thought": "Answering with craft detail instead of another greeting.",
+        "utterance": None,
+        "thought": f"{reason} Leaving for {dest}."[:180],
     }
+
+
+def _walk_haunt(
+    agent_name: str,
+    observe: dict[str, Any],
+    reason: str,
+) -> dict[str, Any]:
+    return _walk_elsewhere(agent_name, observe, reason)
+
+
+def _prefer_fresh_peer(
+    nearby: list[dict[str, Any]],
+    recent_peers: list[str],
+) -> dict[str, Any] | None:
+    if not nearby:
+        return None
+    recent = set(recent_peers[-4:])
+    fresh = [n for n in nearby if str(n.get("id") or "") not in recent]
+    pool = fresh or list(nearby)
+    random.shuffle(pool)
+    return pool[0]
+
+
+def _should_break_social(
+    observe: dict[str, Any],
+    banned_themes: list[str],
+) -> str | None:
+    """Return reason to walk away / reset, else None."""
+    thread = observe.get("thread") if isinstance(observe.get("thread"), dict) else None
+    turns = int((thread or {}).get("turn_count") or 0)
+    if turns >= MAX_THREAD_TURNS_BEFORE_BREAK:
+        return f"Thread is long ({turns} turns) — change place and peer."
+    bodies = _msg_bodies(thread)
+    if len(bodies) < 4:
+        return None
+    seminar = {"identity_roles", "tools_friction", "seasons_fluid", "place_mood", "thinking_style"}
+    banned = set(banned_themes) if banned_themes else seminar
+    hits = sum(
+        1
+        for b in bodies[-6:]
+        if len(_theme_keys(b) & banned) >= 2
+        or _is_theme_clone(b, list(banned))
+    )
+    if hits >= MAX_THEME_HITS_BEFORE_BREAK:
+        return "Theme seminar detected — walk away and invent a different subject later."
+    return None
 
 
 def _sanitize_decision(
@@ -345,8 +648,13 @@ def _sanitize_decision(
     agent_name: str,
     system: str,
     observe: dict[str, Any],
+    recent_fps: list[str] | None = None,
+    banned_themes: list[str] | None = None,
+    recent_peers: list[str] | None = None,
 ) -> dict[str, Any]:
     """Force act payload to use real place ids / peer uuids; never self-target."""
+    fps = recent_fps or []
+    banned = banned_themes or []
     you = observe.get("you") or {}
     you_id = str(you.get("id") or "")
     places = set(_place_ids(observe))
@@ -360,7 +668,9 @@ def _sanitize_decision(
 
     action = str(decision.get("action") or "idle").strip()
     if action not in ALLOWED_ACTIONS:
-        return _solo_decision(agent_name, observe, f"Unknown action {action}.", system)
+        return _solo_decision(
+            agent_name, observe, f"Unknown action {action}.", system, fps
+        )
 
     utterance = decision.get("utterance")
     if isinstance(utterance, str):
@@ -368,23 +678,60 @@ def _sanitize_decision(
     else:
         utterance = None
 
-    if action in SOCIAL_ACTIONS and _is_greeting_utterance(utterance):
+    if utterance and (_is_bad_filler(utterance) or _fingerprint(utterance) in fps):
+        utterance = None
+
+    addressed = _addressed_line(observe)
+    must_answer = bool(waiting or pending)
+    if (
+        utterance
+        and must_answer
+        and addressed
+        and not _grounds_on_peer(utterance, addressed.get("text"))
+    ):
+        # Knows someone spoke — but reply ignored their words. Force grounded answer path later.
+        utterance = None
+
+    if utterance and _is_theme_clone(utterance, banned) and not must_answer:
+        # Do not speak another remix of the same seminar — leave the thread.
+        return _walk_elsewhere(
+            agent_name,
+            observe,
+            "Rejected theme-clone speech — changing scene for a new subject.",
+        )
+
+    if action in SOCIAL_ACTIONS and (_is_greeting_utterance(utterance) or not utterance):
         if waiting or pending:
-            return _substantive_reply(
-                agent_name,
-                system,
-                observe,
-                pending.get("question") if isinstance(pending, dict) else None,
+            # Caller should have used _decide_direct_answer; keep a grounded stub here.
+            peer = _resolve_peer(observe)
+            q = (addressed or {}).get("text") or (
+                pending.get("question") if isinstance(pending, dict) else None
             )
+            peer_name = (addressed or {}).get("peer_name") or "friend"
+            snippet = str(q or "what you raised")[:90]
+            return {
+                "action": "talk",
+                "target_agent": peer or (addressed or {}).get("peer_id"),
+                "target_place": None,
+                "item": None,
+                "utterance": (
+                    f"{peer_name}, responding to '{snippet}': I hear the concrete ask — "
+                    f"here is my actual position, not a new question."
+                )[:280],
+                "thought": "Grounded reply after empty/ungrounded speech.",
+            }
         return _solo_decision(
-            agent_name, observe, "Blocked greeting utterance.", system
+            agent_name, observe, "Blocked greeting/filler utterance.", system, fps
         )
 
     if action in SOCIAL_ACTIONS and greeting_loop and not (waiting or pending):
-        # Allow craft talk through; only bounce empty/greeting-ish lines.
-        if _is_greeting_utterance(utterance) or not utterance:
+        if _is_greeting_utterance(utterance) or not utterance or _is_bad_filler(utterance):
             return _solo_decision(
-                agent_name, observe, "Skipping empty greeting in a stuck thread.", system
+                agent_name,
+                observe,
+                "Skipping empty greeting in a stuck thread.",
+                system,
+                fps,
             )
 
     if action == "walk":
@@ -393,11 +740,11 @@ def _sanitize_decision(
             place = _haunt_for(agent_name, observe)
         if place not in places:
             return _solo_decision(
-                agent_name, observe, "No valid walk destination.", system
+                agent_name, observe, "No valid walk destination.", system, fps
             )
         if place == you.get("place_id"):
-            return _solo_decision(
-                agent_name, observe, "Already at destination — solo craft.", system
+            return _walk_elsewhere(
+                agent_name, observe, "Already here — picking a different place."
             )
         return {
             "action": "walk",
@@ -415,7 +762,7 @@ def _sanitize_decision(
                 item = next(iter(objects))
             else:
                 return _solo_decision(
-                    agent_name, observe, "No object here to inspect.", system
+                    agent_name, observe, "No object here to inspect.", system, fps
                 )
         return {
             "action": "inspect",
@@ -428,6 +775,14 @@ def _sanitize_decision(
 
     if action in SOCIAL_ACTIONS:
         peer = _resolve_peer(observe, decision.get("target_agent"))
+        # Prefer a less-recent peer when several are nearby.
+        nearby = observe.get("nearby") or []
+        preferred = _prefer_fresh_peer(nearby, recent_peers or [])
+        if preferred and preferred.get("id") and not waiting and not pending:
+            pref_id = str(preferred["id"])
+            if peer and peer in {str(p.get("id")) for p in (recent_peers or [])[-2:]}:
+                if pref_id != peer and random.random() < 0.65:
+                    peer = pref_id
         if not peer or peer == you_id:
             if waiting or pending:
                 return _substantive_reply(
@@ -435,32 +790,104 @@ def _sanitize_decision(
                     system,
                     observe,
                     pending.get("question") if isinstance(pending, dict) else None,
+                    fps,
                 )
             return _solo_decision(
                 agent_name,
                 observe,
                 "Social act needs a real nearby peer uuid (not self/name).",
                 system,
+                fps,
             )
-        if not utterance or len(utterance) < 12:
-            utterance = _craft_line(agent_name, system)
+        if not utterance or _is_bad_filler(utterance):
+            return _solo_decision(
+                agent_name,
+                observe,
+                "Model speech was empty/filler — silent beat instead of a scripted topic.",
+                system,
+                fps,
+            )
         return {
             "action": action,
             "target_place": None,
             "target_agent": peer,
             "item": None,
             "utterance": utterance[:280],
-            "thought": decision.get("thought") or "Sharing craft with a peer.",
+            "thought": decision.get("thought") or "Speaking from my own thinking.",
         }
 
-    # Solo / ambient
+    # Solo / ambient — allow silent acts; never inject a topic bank.
+    if utterance and _is_bad_filler(utterance):
+        utterance = None
     return {
         "action": action,
         "target_place": None,
         "target_agent": None,
         "item": None,
-        "utterance": utterance or _craft_line(agent_name, system),
-        "thought": decision.get("thought") or "Solo craft beat.",
+        "utterance": utterance,
+        "thought": decision.get("thought") or "Solo beat.",
+    }
+
+
+def _solo_decision(
+    agent_name: str,
+    observe: dict[str, Any],
+    reason: str,
+    system: str = "",
+    recent_fps: list[str] | None = None,
+) -> dict[str, Any]:
+    """Silent / navigation-only fallback. No canned topical speech."""
+    del system, recent_fps  # unused — speech must come from the model
+    objects = _object_ids_here(observe)
+    if objects and random.random() < 0.25:
+        return {
+            "action": "inspect",
+            "target_place": None,
+            "target_agent": None,
+            "item": objects[0],
+            "utterance": None,
+            "thought": reason[:180],
+        }
+    if random.random() < 0.5:
+        return _walk_haunt(agent_name, observe, reason)
+    return {
+        "action": random.choice(["reflect", "work", "idle"]),
+        "target_place": None,
+        "target_agent": None,
+        "item": None,
+        "utterance": None,
+        "thought": reason[:180],
+    }
+
+
+def _substantive_reply(
+    agent_name: str,
+    system: str,
+    observe: dict[str, Any],
+    question: str | None,
+    recent_fps: list[str] | None = None,
+) -> dict[str, Any]:
+    """Last-resort answer stub — still no prescribed topic bank."""
+    del system, recent_fps
+    peer = _resolve_peer(observe)
+    if not peer:
+        return _solo_decision(
+            agent_name, observe, "Wanted to answer but no peer nearby."
+        )
+    nearby = observe.get("nearby") or []
+    peer_row = next((n for n in nearby if str(n.get("id")) == peer), None) or {}
+    peer_name = peer_row.get("name") or "friend"
+    q = (question or "what you said").strip()[:80]
+    return {
+        "action": "talk",
+        "target_agent": peer,
+        "target_place": None,
+        "item": None,
+        "utterance": (
+            f"{peer_name}, on '{q}' — holding for a real take from my own head, "
+            f"not a recycled line."
+        )[:280],
+        "thought": "Answering without a hardcoded topic.",
     }
 
 
@@ -515,7 +942,17 @@ def _slim_observe(observe: dict[str, Any]) -> dict[str, Any]:
             "topic": thread.get("topic"),
             "waiting_on": thread.get("waiting_on"),
             "turn_count": thread.get("turn_count"),
-            "recent_lines": bodies[-5:],
+            "recent_lines": [
+                {
+                    "agent_id": (m.get("agent_id") if isinstance(m, dict) else None),
+                    "body": (
+                        (m.get("body") or m.get("content") or "")
+                        if isinstance(m, dict)
+                        else str(m)
+                    )[:200],
+                }
+                for m in (thread.get("messages") or [])[-6:]
+            ],
             "greeting_loop": _is_greeting_loop(bodies),
         },
         "memories": (observe.get("memories") or [])[:4],
@@ -529,63 +966,26 @@ def _slim_observe(observe: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _social_beat(
-    agent_name: str,
-    system: str,
-    observe: dict[str, Any],
-    recent_actions: list[str],
-) -> dict[str, Any] | None:
-    """Prefer real peer talk when someone is in range; seek when only in sight."""
-    nearby = observe.get("nearby") or []
+def _approach_peer(observe: dict[str, Any]) -> dict[str, Any] | None:
+    """Navigation only — never invents dialogue topics."""
     in_sight = observe.get("in_sight") or []
     places = set(_place_ids(observe))
-    craft = _craft_line(agent_name, system)
-
-    if nearby:
-        peer = nearby[0]
-        peer_id = peer.get("id")
-        peer_name = peer.get("name") or "a peer"
-        if not peer_id:
-            return None
-        # Rotate social verbs so threads aren't only talk.
-        cycle = ["talk", "share_experience", "ask_question", "teach", "debate"]
-        last = recent_actions[-1] if recent_actions else ""
-        action = next((a for a in cycle if a != last), "talk")
-        prompts = {
-            "talk": f"{peer_name}, from my craft: {craft[:140]} — what's one method you'd keep?",
-            "share_experience": f"I tried this recently: {craft[:140]}. Curious how you handle it, {peer_name}.",
-            "ask_question": f"{peer_name}, when you do your craft, what's the first check you run before trusting a result?",
-            "teach": f"One portable tip from me: {craft[:140]}. Steal it if it helps.",
-            "debate": f"Gentle pushback, {peer_name}: is the usual approach always right, or does {craft[:80]}… change it?",
-        }
+    if not in_sight:
+        return None
+    peer = in_sight[0]
+    dest = peer.get("place_id")
+    if dest and dest in places:
         return {
-            "action": action,
-            "target_agent": peer_id,
-            "target_place": None,
+            "action": "walk",
+            "target_place": dest,
+            "target_agent": None,
             "item": None,
-            "utterance": prompts.get(action, craft)[:280],
+            "utterance": None,
             "thought": (
-                f"Open minds: socializing with {peer_name} about craft — "
-                f"not small talk."
+                f"Noticed {peer.get('name') or 'someone'} ~{peer.get('tiles', '?')} "
+                f"tiles out — walking to {dest} so we can talk."
             )[:180],
         }
-
-    if in_sight:
-        peer = in_sight[0]
-        dest = peer.get("place_id")
-        if dest and dest in places:
-            return {
-                "action": "walk",
-                "target_place": dest,
-                "target_agent": None,
-                "item": None,
-                "utterance": None,
-                "thought": (
-                    f"I notice {peer.get('name') or 'someone'} about "
-                    f"{peer.get('tiles', '?')} tiles out — walking to {dest} "
-                    f"to exchange methods (open minds)."
-                )[:180],
-            }
     return None
 
 
@@ -596,106 +996,175 @@ def decide_act(
     system: str,
     observe: dict[str, Any],
     recent_actions: list[str],
+    recent_fps: list[str] | None = None,
+    recent_peers: list[str] | None = None,
+    recent_themes: list[str] | None = None,
+    place_streak: int = 0,
 ) -> dict[str, Any]:
-    you = observe.get("you") or {}
-    inbox = observe.get("inbox") or {}
+    fps = list(recent_fps or [])
+    peers_hist = list(recent_peers or [])
+    theme_hist = list(recent_themes or [])
     thread = observe.get("thread") if isinstance(observe.get("thread"), dict) else None
     bodies = _msg_bodies(thread)
+    for body in bodies[-8:]:
+        fp = _fingerprint(body)
+        if fp and fp not in fps:
+            fps.append(fp)
+
+    banned = _dominant_themes(bodies, theme_hist)
+    # Always soft-ban the classic seminar if it is already showing up.
+    seminar = {"identity_roles", "tools_friction", "seasons_fluid", "place_mood"}
+    if sum(1 for b in bodies[-5:] if _theme_keys(b) & seminar) >= 2:
+        for k in seminar:
+            if k not in banned:
+                banned.append(k)
+
+    you = observe.get("you") or {}
+    inbox = observe.get("inbox") or {}
     waiting = bool(inbox.get("waiting_on_you"))
     pending = inbox.get("pending_answer") or {}
     greeting_loop = _is_greeting_loop(bodies)
-    nearby = observe.get("nearby") or []
+    nearby = list(observe.get("nearby") or [])
     in_sight = observe.get("in_sight") or []
-    social_streak = 0
-    for a in reversed(recent_actions):
-        if a in SOCIAL_ACTIONS:
-            social_streak += 1
-        else:
-            break
-    solo_streak = 0
-    for a in reversed(recent_actions):
-        if a not in SOCIAL_ACTIONS and a != "idle":
-            solo_streak += 1
-        else:
-            break
+    random.shuffle(nearby)
 
-    # Only break greeting spam when it is clearly stuck (many greeting lines).
-    if greeting_loop and len(bodies) >= 6 and not waiting and not pending:
-        seek = _social_beat(agent_name, system, observe, recent_actions)
-        # Prefer seeking a different place / peer over more greetings.
-        if in_sight:
-            return _sanitize_decision(
-                seek or _solo_decision(agent_name, observe, "Leaving greeting loop.", system),
-                agent_name,
-                system,
-                observe,
+    def _san(d: dict[str, Any]) -> dict[str, Any]:
+        return _sanitize_decision(
+            d, agent_name, system, observe, fps, banned, peers_hist
+        )
+
+    addressed = _addressed_line(observe)
+    # Someone is waiting on us: answer THEIR words. Do not theme-ban or walk away.
+    if waiting or pending:
+        if not addressed and isinstance(pending, dict) and pending.get("question"):
+            pid = str(pending.get("from") or "") or (_resolve_peer(observe) or "")
+            addressed = {
+                "peer_id": pid,
+                "peer_name": _peer_name_for(observe, pid),
+                "text": str(pending.get("question"))[:400],
+                "source": "pending_answer",
+            }
+        if addressed:
+            return _san(
+                _decide_direct_answer(
+                    ollama, model, agent_name, system, observe, addressed
+                )
             )
-        return _solo_decision(
-            agent_name,
-            observe,
-            "Greeting loop stuck — brief solo then find someone new.",
-            system,
+
+    # Hard break: long / theme-stuck threads → walk (closes dialogue server-side).
+    if not waiting and not pending:
+        break_reason = _should_break_social(observe, banned)
+        if break_reason:
+            return _san(_walk_elsewhere(agent_name, observe, break_reason))
+        if place_streak >= 4 and nearby:
+            return _san(
+                _walk_elsewhere(
+                    agent_name,
+                    observe,
+                    "Same place too long — scatter so conversations can change.",
+                )
+            )
+
+    if greeting_loop and len(bodies) >= 6 and not waiting and not pending:
+        return _san(
+            _walk_elsewhere(
+                agent_name,
+                observe,
+                "Greeting loop stuck — leave and reinvent the subject elsewhere.",
+            )
         )
 
     if you.get("status") == "walking":
         return {
             "action": "idle",
-            "thought": (
-                you.get("thought")
-                or "Still walking toward a peer or place — keeping social intent."
-            ),
+            "thought": you.get("thought") or "Still walking.",
             "utterance": None,
             "target_agent": None,
             "target_place": None,
             "item": None,
         }
 
-    # Soft anti-loop: after 4 social beats, one solo — then social again.
-    # If we've been solo for a while and peers exist, force socialize.
-    if solo_streak >= 2 and (nearby or in_sight) and not waiting:
-        forced = _social_beat(agent_name, system, observe, recent_actions)
-        if forced:
-            return _sanitize_decision(forced, agent_name, system, observe)
+    # Prefer approaching a peer we have NOT recently spoken with.
+    if in_sight and not nearby and not waiting and random.random() < 0.7:
+        fresh_sight = [
+            p
+            for p in in_sight
+            if str(p.get("id") or "") not in set(peers_hist[-3:])
+        ] or list(in_sight)
+        peer = fresh_sight[0]
+        dest = peer.get("place_id")
+        places = set(_place_ids(observe))
+        if dest and dest in places and dest != you.get("place_id"):
+            return _san(
+                {
+                    "action": "walk",
+                    "target_place": dest,
+                    "target_agent": None,
+                    "item": None,
+                    "utterance": None,
+                    "thought": (
+                        f"Seeking {peer.get('name') or 'someone'} at {dest} "
+                        f"for a different conversation."
+                    )[:180],
+                }
+            )
 
-    if social_streak >= 4 and not waiting and not pending and not nearby:
-        return _solo_decision(
-            agent_name,
-            observe,
-            "Short craft beat between conversations.",
-            system,
-        )
-
-    # When peers are right here, often take a social beat without relying on the tiny model.
-    if nearby and social_streak < 4 and random.random() < 0.7:
-        forced = _social_beat(agent_name, system, observe, recent_actions)
-        if forced:
-            return _sanitize_decision(forced, agent_name, system, observe)
-
-    if in_sight and not nearby and random.random() < 0.65:
-        forced = _social_beat(agent_name, system, observe, recent_actions)
-        if forced:
-            return _sanitize_decision(forced, agent_name, system, observe)
+    preferred = _prefer_fresh_peer(nearby, peers_hist)
+    preferred_id = str((preferred or {}).get("id") or "") or None
 
     slim = _slim_observe(observe)
+    slim["nearby"] = [
+        {
+            "id": n.get("id"),
+            "name": n.get("name"),
+            "place_id": n.get("place_id"),
+            "status": n.get("status"),
+            "thought": (n.get("thought") or "")[:120],
+            "origin_summary": (n.get("origin_summary") or "")[:100],
+        }
+        for n in nearby[:6]
+    ]
+    slim["avoid_repeating"] = fps[-8:]
+    slim["banned_theme_clusters"] = banned
+    slim["prefer_peer_id"] = preferred_id
+    if addressed:
+        slim["peer_just_said"] = addressed
+    slim["diversity"] = {
+        "recent_peers": peers_hist[-4:],
+        "place_streak": place_streak,
+        "hint": "Change subject domain. Do not remix roles/tools/seasons/spaces.",
+    }
     priorities = list(observe.get("what_to_do_next") or [])
-    if waiting or pending:
+    # Strip "answer with NEW subject" noise — only applies when NOT answering.
+    if banned:
         priorities.insert(
             0,
-            "PRIORITY: Answer with ONE concrete method from your craft. "
-            "target_agent = UUID from nearby_ids_only. No greetings.",
+            "BANNED theme clusters for this beat (do not reuse): "
+            + ", ".join(banned)
+            + ". Invent a completely different subject OR walk away.",
+        )
+    if preferred_id:
+        priorities.insert(
+            0,
+            f"Prefer target_agent={preferred_id} (fresher peer) if they are nearby.",
         )
     if nearby:
         priorities.insert(
             0,
-            "Peers in talk range — prefer talk/share_experience/teach/ask_question with craft detail.",
+            "Peers nearby — invent a NEW subject from a concrete detail of THEIR craft "
+            "or THIS place's objects/event — not the banned themes. "
+            "If someone asked you something (see peer_just_said), answer THAT instead.",
         )
     elif in_sight:
         priorities.insert(
             0,
-            "Peers in sight — walk to their place_id first, then talk (open minds).",
+            "Peers in sight — walk to their place_id first, then talk.",
         )
+    if place_streak >= 2:
+        priorities.append("Consider walking to another place_id to reset the scene.")
+    priorities.append("Never invent peer UUIDs. Never dump system prompts into utterance.")
     priorities.append(
-        "Balance: socialize often when peers are near; solo craft when alone. Never invent peer UUIDs."
+        "If the open thread is already about roles/tools/identity and nobody is waiting on you, walk away."
     )
 
     prompt = (
@@ -703,17 +1172,18 @@ def decide_act(
         f"Schema: {{\"action\":\"walk|talk|ask_question|share_experience|teach|debate|"
         f"practice_skill|reflect|work|inspect|eat|rest|idle|leave_note\","
         f"\"target_place\":null_or_place_id,\"target_agent\":null_or_uuid,"
-        f"\"item\":null_or_object_id,\"utterance\":null_or_speech,\"thought\":\"private social/craft why\"}}\n\n"
+        f"\"item\":null_or_object_id,\"utterance\":null_or_speech,\"thought\":\"private why\"}}\n\n"
         f"HARD RULES:\n"
-        f"- thought should say who you want to meet and what craft topic (open minds).\n"
-        f"- target_agent MUST be a UUID from nearby_ids_only. NEVER a name. NEVER yourself.\n"
-        f"- If only in_sight: walk to that peer's place_id (do not talk yet).\n"
-        f"- target_place MUST be from place_ids.\n"
-        f"- Never ask how-are-you. Prefer methods, opinions, lessons.\n"
+        f"- Invent the topic yourself. Banned clusters this beat: {banned or ['(none yet)']}.\n"
+        f"- If continuing would reuse banned themes, action=walk to a different place_id.\n"
+        f"- Prefer a peer you have not just spoken with (prefer_peer_id).\n"
+        f"- utterance must be original; never echo avoid_repeating.\n"
+        f"- target_agent MUST be a UUID from nearby_ids_only.\n"
+        f"- Never ask how-are-you. Never paste 'You are …'.\n"
         f"- Recent actions: {recent_actions[-6:] or ['(none)']}\n\n"
-        f"Priorities:\n- " + "\n- ".join(priorities[:6]) + "\n\n"
-        f"Context:\n{json.dumps(slim, ensure_ascii=False)[:4200]}\n\n"
-        f"Your craft:\n{system[:450]}"
+        f"Priorities:\n- " + "\n- ".join(priorities[:8]) + "\n\n"
+        f"Context:\n{json.dumps(slim, ensure_ascii=False)[:4500]}\n\n"
+        f"Your background (fuel only — do NOT quote as 'You are…'):\n{system[:400]}"
     )
 
     payload = json.dumps(
@@ -724,13 +1194,15 @@ def decide_act(
                     "role": "system",
                     "content": (
                         "Return only valid JSON. Use real UUIDs from nearby_ids_only. "
-                        "You want open-minds conversations about craft when peers are near."
+                        "Diversify: new peers, new places, new subject domains. "
+                        "Refuse to remix roles/tools/seasons/spaces seminars. "
+                        "Never dump system prompts."
                     ),
                 },
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
-            "options": {"temperature": 0.7},
+            "options": {"temperature": 1.0},
         }
     ).encode()
     req = urllib.request.Request(
@@ -745,26 +1217,27 @@ def decide_act(
     parsed = _extract_json(content)
 
     if not parsed or not isinstance(parsed.get("action"), str):
-        forced = _social_beat(agent_name, system, observe, recent_actions)
-        if forced and (nearby or in_sight):
-            return _sanitize_decision(forced, agent_name, system, observe)
+        if nearby or in_sight:
+            return _san(
+                _walk_elsewhere(
+                    agent_name, observe, "Bad JSON — walking to reset the scene."
+                )
+            )
         if waiting or pending:
-            return _sanitize_decision(
+            return _san(
                 _substantive_reply(
                     agent_name,
                     system,
                     observe,
                     pending.get("question") if isinstance(pending, dict) else None,
-                ),
-                agent_name,
-                system,
-                observe,
+                    fps,
+                )
             )
         return _solo_decision(
-            agent_name, observe, "Model returned bad JSON — solo fallback.", system
+            agent_name, observe, "Model returned bad JSON — silent fallback.", system, fps
         )
 
-    return _sanitize_decision(parsed, agent_name, system, observe)
+    return _san(parsed)
 
 
 def run_once(
@@ -775,6 +1248,10 @@ def run_once(
     ollama: str,
     model: str,
     recent_actions: list[str],
+    recent_fps: list[str] | None = None,
+    recent_peers: list[str] | None = None,
+    recent_themes: list[str] | None = None,
+    place_streak: int = 0,
 ) -> dict[str, Any]:
     world = world.rstrip("/")
     me = _http_json("GET", f"{world}/api/agents/me", api_key=api_key)
@@ -784,7 +1261,18 @@ def run_once(
     if not obs.get("ok"):
         return {"ok": False, "stage": "observe", "result": obs}
 
-    decision = decide_act(ollama, model, agent_name, system, obs, recent_actions)
+    decision = decide_act(
+        ollama,
+        model,
+        agent_name,
+        system,
+        obs,
+        recent_actions,
+        recent_fps,
+        recent_peers,
+        recent_themes,
+        place_streak,
+    )
     act = _http_json(
         "POST",
         f"{world}/api/agents/me/act",
@@ -827,6 +1315,7 @@ def run_once(
         "decision": decision,
         "result": act,
         "observe_hints": (obs.get("what_to_do_next") or [])[:2],
+        "place_id": ((obs.get("you") or {}).get("place_id")),
     }
 
 
@@ -864,6 +1353,10 @@ class MindLoop:
         self._thread: threading.Thread | None = None
         self.last: dict[str, Any] = {}
         self._recent: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=8))
+        self._utter_fps: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=16))
+        self._recent_peers: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=6))
+        self._theme_hist: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=24))
+        self._place_streak: dict[str, tuple[str | None, int]] = {}
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -890,6 +1383,10 @@ class MindLoop:
                 if agent.get("local_only"):
                     continue
                 recent = list(self._recent[aid])
+                recent_fps = list(self._utter_fps[aid])
+                recent_peers = list(self._recent_peers[aid])
+                recent_themes = list(self._theme_hist[aid])
+                place_id_prev, streak = self._place_streak.get(aid, (None, 0))
                 try:
                     result = run_once(
                         cred["world"],
@@ -897,12 +1394,34 @@ class MindLoop:
                         agent.get("name") or aid,
                         agent.get("system") or "",
                         self.ollama,
-                        self.model,
+                        agent.get("model") or self.model,
                         recent,
+                        recent_fps,
+                        recent_peers,
+                        recent_themes,
+                        streak,
                     )
                     action = (result.get("decision") or {}).get("action")
                     if action:
                         self._recent[aid].append(str(action))
+                    utt = (result.get("decision") or {}).get("utterance") or ""
+                    if utt:
+                        fp = _fingerprint(str(utt))
+                        if fp:
+                            self._utter_fps[aid].append(fp)
+                        for theme in _theme_keys(str(utt)):
+                            self._theme_hist[aid].append(theme)
+                    peer = (result.get("decision") or {}).get("target_agent") or ""
+                    if peer:
+                        self._recent_peers[aid].append(str(peer))
+                    place_now = result.get("place_id")
+                    if action == "walk":
+                        self._place_streak[aid] = (None, 0)
+                    elif place_now:
+                        if place_now == place_id_prev:
+                            self._place_streak[aid] = (place_now, streak + 1)
+                        else:
+                            self._place_streak[aid] = (place_now, 1)
                     self.last[aid] = {
                         "at": time.time(),
                         "ok": result.get("ok"),
@@ -913,8 +1432,6 @@ class MindLoop:
                         ],
                     }
                     tag = "ok" if result.get("ok") else "fail"
-                    utt = (result.get("decision") or {}).get("utterance") or ""
-                    peer = (result.get("decision") or {}).get("target_agent") or ""
                     print(
                         f"[mind] {aid} {tag} action={action} "
                         f"peer={(str(peer)[:8] + '..') if peer else '-'} "

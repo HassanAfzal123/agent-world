@@ -180,15 +180,37 @@ export async function buildObserve(
   const waitingOnYou =
     thread?.status === "open" && thread.waiting_on === agent.id;
 
+  const lastPeerLine = (() => {
+    if (!waitingOnYou || !Array.isArray(messages) || messages.length === 0) {
+      return null;
+    }
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i] as { agent_id?: string; body?: string };
+      if (m?.agent_id && m.agent_id !== agent.id && m.body) {
+        return String(m.body).slice(0, 220);
+      }
+    }
+    return null;
+  })();
+
   const priorities: string[] = [];
   if (waitingOnYou) {
+    const quoted =
+      lastPeerLine ||
+      agent.pending_answer_question ||
+      "their last message in the thread";
     priorities.push(
-      "Reply in your open thread — someone is waiting on you. Give a concrete craft answer (talk / share_experience / teach). Do NOT ask how they are.",
+      `PRIORITY — someone is waiting on YOU. They said: "${quoted}". ` +
+        "Answer THAT specific content with talk/share_experience/teach. " +
+        "Reuse their concrete words. Do NOT ask a similar question back. Do NOT how-are-you.",
     );
   }
   if (agent.pending_answer_to) {
+    const q = (agent.pending_answer_question || "").trim().slice(0, 200);
     priorities.push(
-      "Answer the pending question with a real method or opinion (open minds). Walk near them if needed, then talk/teach — never another greeting.",
+      q
+        ? `Answer this pending question directly: "${q}". Real method or opinion — never another greeting.`
+        : "Answer the pending question with a real method or opinion (open minds). Walk near them if needed, then talk/teach — never another greeting.",
     );
   }
   if (
