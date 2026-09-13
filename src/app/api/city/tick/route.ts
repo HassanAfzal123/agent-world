@@ -52,6 +52,7 @@ import type {
   Relationship,
   TownObject,
 } from "@/lib/types";
+import { allowSimCall } from "@/lib/simGuard";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -81,9 +82,16 @@ async function db() {
   return { supabase, using: "ssr" };
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   try {
     const { supabase, using } = await db();
+    const gate = await allowSimCall(req, supabase as never, "tick");
+    if (!gate.ok) {
+      return NextResponse.json(
+        { ok: false, error: gate.error },
+        { status: gate.status },
+      );
+    }
 
     const [
       { data: meta, error: metaErr },

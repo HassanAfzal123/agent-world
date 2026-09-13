@@ -21,7 +21,7 @@ body {
     radial-gradient(circle at 50% 0%, #143044 0%, transparent 42%),
     var(--bg);
   color: var(--text);
-  font-family: "Segoe UI", "Avenir Next", sans-serif;
+  font-family: var(--font-sans), "Avenir Next", sans-serif;
 }
 
 button,
@@ -40,8 +40,19 @@ textarea {
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  align-items: flex-start;
+  align-items: center;
   margin-bottom: 16px;
+}
+
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-mark {
+  border-radius: 8px;
+  flex-shrink: 0;
 }
 
 .brand {
@@ -49,6 +60,7 @@ textarea {
   font-size: 14px;
   color: var(--accent);
   font-weight: 700;
+  font-family: var(--font-display), var(--font-sans), serif;
 }
 
 .sub {
@@ -1242,67 +1254,94 @@ button.danger {
 
 .connect-landing {
   display: grid;
-  gap: 28px;
-  padding-bottom: 40px;
-}
-
-.connect-landing-placeholder {
-  min-height: min(52vh, 420px);
+  gap: 40px;
+  padding-bottom: 48px;
 }
 
 .connect-hero {
   position: relative;
-  min-height: min(52vh, 420px);
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  padding: 28px 24px 32px;
-  border: 1px solid var(--line);
+  margin: 0 -20px;
+  width: calc(100% + 40px);
+  padding: 28px 20px 32px;
+  border: none;
   background:
-    linear-gradient(180deg, transparent 0%, #0a1014 72%),
-    radial-gradient(ellipse at 30% 20%, #1a4058 0%, transparent 55%),
-    radial-gradient(ellipse at 80% 60%, #143044 0%, transparent 45%),
-    #0d1520;
+    linear-gradient(
+      115deg,
+      rgba(26, 64, 88, 0.55) 0%,
+      transparent 42%
+    ),
+    linear-gradient(180deg, #122230 0%, #0a1014 100%),
+    url("/agentworld-mark.png") right -12% center / min(52vw, 380px) no-repeat;
   overflow: hidden;
+  animation: connect-hero-in 700ms ease-out both;
 }
 
-.connect-kicker {
-  margin: 0 0 8px;
-  font-size: 11px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--gold);
+.connect-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    #0a1014 0%,
+    rgba(10, 16, 20, 0.72) 48%,
+    rgba(10, 16, 20, 0.35) 100%
+  );
+  pointer-events: none;
+}
+
+.connect-hero-inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  max-width: min(1680px, 100%);
+  margin: 0 auto;
+  padding: 0 clamp(0px, 2vw, 20px);
+  animation: connect-mark-in 800ms ease-out both;
+}
+
+.connect-logo {
+  border-radius: 20px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.4);
+  flex-shrink: 0;
+}
+
+.connect-hero-copy {
+  min-width: 0;
 }
 
 .connect-brand {
   margin: 0;
-  font-family: "Avenir Next", "Segoe UI", sans-serif;
-  font-size: clamp(28px, 6vw, 48px);
-  letter-spacing: 0.28em;
-  font-weight: 700;
+  font-family: var(--font-display), var(--font-sans), serif;
+  font-size: clamp(28px, 5.5vw, 48px);
+  letter-spacing: 0.2em;
+  font-weight: 650;
   color: var(--accent);
+  animation: connect-brand-in 800ms ease-out 60ms both;
 }
 
 .connect-lead {
-  margin: 14px 0 0;
-  max-width: 36rem;
+  margin: 12px 0 0;
+  max-width: 32rem;
   font-size: 16px;
   line-height: 1.5;
   color: var(--text);
+  animation: connect-lead-in 800ms ease-out 110ms both;
 }
 
 .connect-cta-row {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  margin-top: 22px;
+  margin-top: 20px;
 }
 
 .connect-cta {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 10px 18px;
+  padding: 11px 20px;
   border: 1px solid var(--accent);
   background: var(--accent);
   color: #061018;
@@ -1317,33 +1356,72 @@ button.danger {
   color: var(--accent);
 }
 
+.connect-pitch,
+.connect-why,
 .connect-steps {
+  padding: 0 4px;
   max-width: 40rem;
 }
 
+.connect-pitch h2,
+.connect-why h2,
 .connect-steps h2 {
-  margin: 0 0 8px;
-  font-size: 18px;
-  letter-spacing: 0.04em;
+  margin: 0 0 10px;
+  font-size: 20px;
+  letter-spacing: 0.03em;
+  font-family: var(--font-display), var(--font-sans), serif;
+}
+
+.connect-pitch p,
+.connect-steps-lead {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.connect-why-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 16px;
+}
+
+.connect-why-list li {
+  display: grid;
+  gap: 4px;
+}
+
+.connect-why-list strong {
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+}
+
+.connect-why-list span {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
 }
 
 .connect-ol {
-  margin: 16px 0;
-  padding-left: 20px;
+  margin: 14px 0;
+  padding-left: 18px;
   color: var(--text);
   line-height: 1.55;
   font-size: 14px;
 }
 
 .connect-ol li {
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .connect-code-block {
   border: 1px solid var(--line);
   background: #0c141c;
   padding: 12px 14px;
-  margin: 16px 0;
+  margin: 12px 0 0;
   overflow-x: auto;
 }
 
@@ -1362,6 +1440,70 @@ button.danger {
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.connect-skill-link {
+  margin: 14px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.connect-skill-link a {
+  color: var(--accent);
+}
+
+@keyframes connect-hero-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes connect-mark-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes connect-brand-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes connect-lead-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .connect-hero-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .connect-hero {
+    background-size: min(70vw, 260px);
+    background-position: right -8% top 10%;
+  }
 }
 
 @media (max-width: 980px) {

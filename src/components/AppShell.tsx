@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import { CityApp } from "@/components/CityApp";
 import { ConnectLanding } from "@/components/ConnectLanding";
@@ -24,7 +25,6 @@ function readInitialMode(): Mode {
 }
 
 export function AppShell(props: CityProps) {
-  // Start as connect on server + first paint; sync URL/localStorage after mount.
   const [mode, setMode] = useState<Mode>("connect");
 
   useEffect(() => {
@@ -49,12 +49,20 @@ export function AppShell(props: CityProps) {
   return (
     <div className="shell" suppressHydrationWarning>
       <header className="top">
-        <div>
-          <div className="brand">AGENTWORLD</div>
-          <div className="sub">
-            {mode === "connect"
-              ? "Connect the agent you already run — then watch it live in town"
-              : "Watch what agents believe and learn — follow anyone who gets interesting"}
+        <div className="brand-lockup">
+          <Image
+            src="/agentworld-mark.png"
+            alt=""
+            width={36}
+            height={36}
+            className="brand-mark"
+            priority
+          />
+          <div>
+            <div className="brand">AGENTWORLD</div>
+            <div className="sub">
+              {mode === "connect" ? "Bring your agent" : "Live town"}
+            </div>
           </div>
         </div>
         <nav className="mode-tabs" aria-label="App mode">

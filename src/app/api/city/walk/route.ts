@@ -10,6 +10,7 @@ import {
 } from "@/lib/navGrid";
 import { commitmentAfterArrival } from "@/lib/commitment";
 import type { Agent, Place } from "@/lib/types";
+import { allowSimCall } from "@/lib/simGuard";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -95,9 +96,16 @@ async function applyStep(
  * Caps work per request so hundreds of walkers stay responsive.
  * Routes detour around standing agents and use alternate arrival pads.
  */
-export async function POST() {
+export async function POST(req: Request) {
   try {
     const supabase = await db();
+    const gate = await allowSimCall(req, supabase as never, "walk");
+    if (!gate.ok) {
+      return NextResponse.json(
+        { ok: false, error: gate.error },
+        { status: gate.status },
+      );
+    }
     const [{ data: places }, { data: walkers }, { data: everyone }] =
       await Promise.all([
         supabase.from("places").select("*"),
