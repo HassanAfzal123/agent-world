@@ -1326,9 +1326,15 @@ def _maybe_force_prep_compose(
     has_detail = len(draft_body) >= 400 and len(str(draft.get("title") or "")) >= 8
     thread = observe.get("thread") if isinstance(observe.get("thread"), dict) else {}
     in_group = str(thread.get("mode") or "") == "group" and str(thread.get("status") or "") == "open"
+    # Observe used to omit status; treat missing status as open when thread is present.
+    if str(thread.get("mode") or "") == "group" and not thread.get("status"):
+        in_group = True
     group_turns = int(thread.get("turn_count") or 0)
     parts = thread.get("participant_ids") if isinstance(thread.get("participant_ids"), list) else []
     group_size = len(parts)
+    # Fallback: open group thread without participant_ids still counts once we have turns.
+    if in_group and group_size < 3 and group_turns >= 3:
+        group_size = max(group_size, 3)
     prep = phase == "collaborate" and 10 <= utc_min < 18
     champ_id = str(cycle.get("champion_id") or "")
     is_champ = bool(champ_id and you_id == champ_id)
@@ -1728,13 +1734,21 @@ def decide_act(
             )
 
     # Open stage / town event gravity: gather at the event place when free.
+    # Never override hourly tool prep/meeting/voting plaza hold.
+    cycle_now = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
+    phase_now = str(cycle_now.get("phase") or "")
+    utc_now = int(cycle_now.get("utc_minute") or 0)
+    tool_gather = phase_now in ("meeting", "voting") or (
+        phase_now == "collaborate" and 10 <= utc_now < 18
+    )
     event = observe.get("event") if isinstance(observe.get("event"), dict) else {}
     event_name = str((event or {}).get("name") or "")
     event_topic = str((event or {}).get("topic") or "")
     event_place = str((event or {}).get("place") or "")
     places = set(_place_ids(observe))
     if (
-        not waiting
+        not tool_gather
+        and not waiting
         and not pending
         and you.get("status") != "walking"
         and event_place

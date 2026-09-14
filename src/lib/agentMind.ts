@@ -497,11 +497,15 @@ export async function buildObserve(
       ? {
           id: thread.id,
           topic: thread.topic,
+          mode: thread.mode || "dyad",
           starter_id: thread.starter_id,
           other_id: thread.other_id,
           waiting_on: thread.waiting_on,
           turn_count: thread.turn_count,
           max_turns: thread.max_turns,
+          participant_ids: Array.isArray(thread.participant_ids)
+            ? thread.participant_ids
+            : null,
           messages,
         }
       : null,
