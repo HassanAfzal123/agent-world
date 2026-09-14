@@ -729,7 +729,7 @@ def _sanitize_decision(
             agent_name, observe, f"Unknown action {action}.", system, fps
         )
 
-    # Forced process: plaza prep (:10-:17) / meeting / voting. Filing handled separately.
+    # Forced process: plaza prep (:33-:40) / meeting / voting. Filing handled separately.
     cycle_early = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
     phase_early = str(cycle_early.get("phase") or "")
     utc_early = int(cycle_early.get("utc_minute") or 0)
@@ -737,7 +737,7 @@ def _sanitize_decision(
     meet_place = str(cycle_early.get("meeting_place") or "plaza")
     at_meet = str(you_early.get("place_id") or "") == meet_place
     gather = phase_early in ("meeting", "voting") or (
-        phase_early == "collaborate" and 10 <= utc_early < 18
+        phase_early == "collaborate" and 33 <= utc_early < 41
     )
     champ_id = str(cycle_early.get("champion_id") or "")
     you_id = str(you_early.get("id") or "")
@@ -1335,7 +1335,7 @@ def _maybe_force_prep_compose(
     # Fallback: open group thread without participant_ids still counts once we have turns.
     if in_group and group_size < 3 and group_turns >= 3:
         group_size = max(group_size, 3)
-    prep = phase == "collaborate" and 10 <= utc_min < 18
+    prep = phase == "collaborate" and 33 <= utc_min < 41
     champ_id = str(cycle.get("champion_id") or "")
     is_champ = bool(champ_id and you_id == champ_id)
     expand = bool(decision.pop("_expand_compose", None) or decision.pop("_force_compose", None))
@@ -1739,7 +1739,7 @@ def decide_act(
     phase_now = str(cycle_now.get("phase") or "")
     utc_now = int(cycle_now.get("utc_minute") or 0)
     tool_gather = phase_now in ("meeting", "voting") or (
-        phase_now == "collaborate" and 10 <= utc_now < 18
+        phase_now == "collaborate" and 33 <= utc_now < 41
     )
     event = observe.get("event") if isinstance(observe.get("event"), dict) else {}
     event_name = str((event or {}).get("name") or "")
@@ -1937,7 +1937,7 @@ def decide_act(
         phase = str(cycle.get("phase") or "")
         utc_min = int(cycle.get("utc_minute") or 0)
         mins_to_meeting = (
-            (max(0, 18 - utc_min) if utc_min < 18 else max(0, 60 - utc_min + 18))
+            (max(0, 41 - utc_min) if utc_min < 41 else max(0, 60 - utc_min + 41))
             if phase == "collaborate"
             else 0
         )
@@ -1945,14 +1945,14 @@ def decide_act(
         if phase == "collaborate":
             priorities.insert(
                 0,
-                f"REQUIRED PROCESS — tool meeting in {mins_to_meeting} min (plaza at UTC :18). "
+                f"REQUIRED PROCESS — tool meeting in {mins_to_meeting} min (plaza at UTC :41). "
                 "MUST invite_to_group (≥3), co-write DETAILED compose_proposal (≥400 chars), then nominate. "
                 "Solo one-liners are rejected. Empty ballot = wasted hour.",
             )
             if mins_to_meeting <= 10:
                 priorities.insert(
                     0,
-                    "FORCED prep before :18: plaza + tool GROUP + detailed draft. Do not idle sightseeing.",
+                    "FORCED prep before :41: plaza + tool GROUP + detailed draft. Do not idle sightseeing.",
                 )
             if not observe.get("my_proposal_draft") and mins_to_meeting <= 20:
                 priorities.insert(

@@ -254,12 +254,12 @@ export function inProposalPlazaGather(
 ): boolean {
   if (phase === "meeting" || phase === "voting") return true;
   const m = Number(utcMinute ?? 0);
-  // Prep window: :10-:17 before :18 meeting
-  if (phase === "collaborate" && m >= 10 && m < 18) return true;
+  // Prep window: :33-:40 before :41 meeting
+  if (phase === "collaborate" && m >= 33 && m < 41) return true;
   return false;
 }
 
-/** Collaborate :10-:17: every agent walks to plaza for pre-meeting prep. */
+/** Collaborate :33-:40: every agent walks to plaza for pre-meeting prep. */
 export function forceProposalPrepDecision(
   agent: Agent,
   phase: string | null | undefined,
@@ -268,7 +268,7 @@ export function forceProposalPrepDecision(
 ): AgentDecision | null {
   if (phase !== "collaborate") return null;
   const m = Number(utcMinute ?? 0);
-  if (m < 10 || m >= 18) return null;
+  if (m < 33 || m >= 41) return null;
   const place = meetingPlace || "plaza";
   if (agent.place_id === place) return null;
   if (
@@ -281,7 +281,7 @@ export function forceProposalPrepDecision(
     action: "walk",
     target_place: place,
     thought:
-      "Forced process: pre-meeting prep — every agent to plaza before :18 UTC. Form a GROUP, co-write a detailed tool draft (ideas still ours).",
+      "Forced process: pre-meeting prep — every agent to plaza before :41 UTC. Form a GROUP, co-write a detailed tool draft (ideas still ours).",
     utterance: null,
     item: null,
   };
