@@ -201,9 +201,7 @@ export function TownHallPanel({ variant = "strip", pollMs = 15000 }: Props) {
 
       {!live ? (
         <p className="muted tiny town-hall-next">
-          {cycle.forced || cycle.in_gather
-            ? `Scheduled Town Hall · ${nextIn} min to go · gather at ${place}`
-            : `Next Town Hall in ${nextIn} min · gather at ${place}`}
+          Town Hall Meeting opens at UTC :41 each hour · {nextIn} min to go
         </p>
       ) : null}
     </section>
