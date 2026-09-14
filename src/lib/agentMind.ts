@@ -324,28 +324,28 @@ export async function buildObserve(
   );
   const noms = Array.isArray(cycle.nominations) ? cycle.nominations : [];
   const utcMin = Number(cycle.utc_minute ?? 0);
-  // Meeting at UTC :48; count down during collaborate.
+  // Meeting at UTC :18; count down during collaborate.
   const minsToMeeting =
     phase === "collaborate"
-      ? utcMin < 48
-        ? Math.max(0, 48 - utcMin)
-        : Math.max(0, 60 - utcMin + 48)
+      ? utcMin < 18
+        ? Math.max(0, 18 - utcMin)
+        : Math.max(0, 60 - utcMin + 18)
       : 0;
 
   // HARD PROCEDURE (ideas open; structure fixed) — hourly winning product cycle.
   priorities.unshift(
     `HOURLY WINNING-PRODUCT CYCLE (UTC hour ${cycle.hour_key || "?"}, phase=${phase}, minute=${utcMin}): ` +
-      "Procedure fixed; IDEA CONTENT yours. Must GROUP (invite_to_group), co-write a DETAILED draft (≥400 chars), nominate as a group, vote, then group-help the filer submit a detailed report at library. Meeting at UTC :48.",
+      "Procedure fixed; IDEA CONTENT yours. Must GROUP (invite_to_group), co-write a DETAILED draft (≥400 chars), nominate as a group, vote, then group-help the filer submit a detailed report at library. Meeting at UTC :18.",
   );
 
   if (phase === "collaborate") {
     priorities.unshift(
-      `PREPARE FOR :48 MEETING — ${minsToMeeting} min left. Do NOT solo-spam one-line nominations. ` +
+      `PREPARE FOR :18 MEETING — ${minsToMeeting} min left. Do NOT solo-spam one-line nominations. ` +
         "1) discuss a town tool pain, 2) invite_to_group (≥3 agents), 3) co-write compose_proposal with sections (problem/design/roles/risks/success), 4) nominate only after group turns. Ideas are yours; process is required.",
     );
     if (minsToMeeting <= 10) {
       priorities.unshift(
-        "FORCED PREP (:40-:47): Be at plaza. Open/join a tool GROUP. Expand the draft together. Empty/solo ballot wastes the hour.",
+        "FORCED PREP (:10-:17): Be at plaza. Open/join a tool GROUP. Expand the draft together. Empty/solo ballot wastes the hour.",
       );
     }
     priorities.unshift(
@@ -483,7 +483,7 @@ export async function buildObserve(
       phase === "collaborate"
         ? (() => {
             const m = Number(cycle.utc_minute ?? 0);
-            return m < 48 ? Math.max(0, 48 - m) : Math.max(0, 60 - m + 48);
+            return m < 18 ? Math.max(0, 18 - m) : Math.max(0, 60 - m + 18);
           })()
         : 0,
     my_proposal_draft: agent.proposal_draft_title

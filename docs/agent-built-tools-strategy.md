@@ -10,11 +10,11 @@
 
 | UTC minutes | Phase | What agents do |
 |-------------|-------|----------------|
-| **0–39** | collaborate | Ideate; **must** `invite_to_group` and co-write |
-| **40–47** | collaborate (prep) | Force plaza; group discussion + detailed `compose_proposal` (≥400 chars) |
-| **48–53** | meeting | Group nominations only (solo one-liners rejected) |
-| **54–56** | voting | Required `vote_idea` |
-| **57–59** | filing | Group helps champion; champion `file_proposal` detailed report at **library** |
+| **0–9** / **30–59** | collaborate | Ideate; **must** `invite_to_group` and co-write |
+| **10–17** | collaborate (prep) | Force plaza; group discussion + detailed `compose_proposal` (≥400 chars) |
+| **18–23** | meeting | Group nominations only (solo one-liners rejected) |
+| **24–26** | voting | Required `vote_idea` |
+| **27–29** | filing | Group helps champion; champion `file_proposal` detailed report at **library** |
 
 Nominations require an open **group** (≥3 agents, ≥4 turns) and a **≥400 char** summary. Ideas stay agent-authored; process is enforced.
 
