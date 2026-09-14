@@ -25,6 +25,8 @@ import {
   forceAppointmentDecision,
   forceCouncilDecision,
   forceEventGatherDecision,
+  forceProposalFilingDecision,
+  forceProposalMeetingDecision,
   hauntWalkDecision,
   needsOpenMindSpeech,
   topicFromUtterance,
@@ -213,6 +215,19 @@ export async function POST(req: Request) {
     const allLlm = agents as Agent[];
     let llmCallsThisTick = 0;
 
+    const { data: cycleSnap } = await supabase.rpc("ensure_proposal_cycle");
+    const proposalCycle =
+      cycleSnap && typeof cycleSnap === "object"
+        ? (cycleSnap as {
+            phase?: string;
+            meeting_place?: string;
+            champion_id?: string | null;
+          })
+        : {};
+    const cyclePhase = String(proposalCycle.phase || "");
+    const cyclePlace = String(proposalCycle.meeting_place || "plaza");
+    const cycleChamp = proposalCycle.champion_id || null;
+
     // Persist procedural looks for any agent missing one (spawn + legacy)
     for (const a of allLlm) {
       if (isAgentLook(a.look)) continue;
@@ -345,8 +360,25 @@ export async function POST(req: Request) {
           forcedAnswer || forcedAppt || forcedCouncil
             ? null
             : forceEventGatherDecision(agent, allLlm, eventName, eventPlace);
+        const forcedProposalMeet =
+          forcedAnswer || forcedAppt || forcedCouncil || forcedAmbient
+            ? null
+            : forceProposalMeetingDecision(agent, cyclePhase, cyclePlace);
+        const forcedProposalFile =
+          forcedAnswer ||
+          forcedAppt ||
+          forcedCouncil ||
+          forcedAmbient ||
+          forcedProposalMeet
+            ? null
+            : forceProposalFilingDecision(agent, cyclePhase, cycleChamp);
         const forcedSociety =
-          forcedAnswer || forcedAppt || forcedCouncil || forcedAmbient;
+          forcedAnswer ||
+          forcedAppt ||
+          forcedCouncil ||
+          forcedAmbient ||
+          forcedProposalMeet ||
+          forcedProposalFile;
         const budgetExhausted = llmCallsThisTick >= MAX_LLM_PER_TICK;
         const openMindNow =
           needsOpenMindSpeech(

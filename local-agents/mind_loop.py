@@ -72,6 +72,8 @@ ALLOWED_ACTIONS = {
     "ask_favor",
     "invite_to_group",
     "compose_proposal",
+    "nominate_idea",
+    "vote_idea",
     "file_proposal",
 }
 
@@ -848,6 +850,57 @@ def _sanitize_decision(
             or "Writing our proposal document for peer review.",
         }
 
+    if action == "nominate_idea":
+        title = str(decision.get("item") or decision.get("plan") or "").strip()
+        draft = (utterance or "").strip()
+        saved = observe.get("my_proposal_draft")
+        if isinstance(saved, dict):
+            if len(title) < 8:
+                title = str(saved.get("title") or "").strip()
+            if len(draft) < 80:
+                draft = str(saved.get("body") or "").strip()
+        if len(title) < 8 or len(draft) < 80:
+            return _solo_decision(
+                agent_name,
+                observe,
+                "nominate_idea needs title + summary (compose_proposal first if needed).",
+                system,
+                fps,
+            )
+        return {
+            "action": "nominate_idea",
+            "target_place": None,
+            "target_agent": None,
+            "item": title[:160],
+            "utterance": draft[:8000],
+            "thought": decision.get("thought")
+            or "Nominating this idea for the hourly winning-product vote.",
+        }
+
+    if action == "vote_idea":
+        nom = str(decision.get("item") or "").strip()
+        cycle = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
+        noms = cycle.get("nominations") if isinstance(cycle.get("nominations"), list) else []
+        if len(nom) < 8 and noms:
+            first = noms[0] if isinstance(noms[0], dict) else {}
+            nom = str(first.get("id") or "")
+        if len(nom) < 8:
+            return _solo_decision(
+                agent_name,
+                observe,
+                "vote_idea needs item=nomination uuid from proposal_cycle.nominations.",
+                system,
+                fps,
+            )
+        return {
+            "action": "vote_idea",
+            "target_place": None,
+            "target_agent": None,
+            "item": nom,
+            "utterance": utterance,
+            "thought": decision.get("thought") or "Casting my vote for this hour's winner.",
+        }
+
     if action == "file_proposal":
         you = observe.get("you") if isinstance(observe.get("you"), dict) else {}
         place = str(you.get("place_id") or "")
@@ -1399,22 +1452,30 @@ def decide_act(
                 "optional target_place to meet. Never open a group just because several people stand here."
             )
         priorities.append(
-            "PROPOSAL CADENCE: this hour, push a tool idea forward — debate pain points, pick a winning angle, "
-            "or revise a draft. YOU write the document with compose_proposal (item=title, utterance=full structured text). "
-            "When peers agree it wins AND proposal_shelf.can_file, walk to library and file_proposal. "
-            "Do not spam; 1 filing/hour, max 3 pending."
+            "HOURLY WINNING-PRODUCT CYCLE: follow observe.proposal_cycle.phase. "
+            "collaborate: discuss tools, invite_to_group when an idea needs more minds, compose_proposal, nominate_idea. "
+            "meeting/voting: go to plaza, vote_idea with item=nomination uuid. "
+            "filing: only the random champion file_proposal at library. Ideas are open; procedure is fixed."
         )
+        cycle = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
+        phase = str(cycle.get("phase") or "")
         you = observe.get("you") if isinstance(observe.get("you"), dict) else {}
-        draft = observe.get("my_proposal_draft")
-        if isinstance(draft, dict) and draft.get("title"):
+        if phase == "meeting" or phase == "voting":
+            place = str(cycle.get("meeting_place") or "plaza")
             priorities.insert(
                 0,
-                f'You hold draft "{draft.get("title")}". Debate/revise it, or file_proposal at library if it is the winner.',
+                f"PHASE {phase}: walk to {place} and {'nominate/report' if phase == 'meeting' else 'vote_idea (item=nomination id)'}.",
             )
-        if you.get("place_id") == "library":
+        if phase == "filing" and cycle.get("champion_id") and str(cycle.get("champion_id")) == str(you.get("id") or ""):
             priorities.insert(
                 0,
-                "At library Proposal Shelf — file_proposal only if shelf is open and you have the winning draft.",
+                f'YOU are champion — walk to library and file_proposal for "{cycle.get("winning_title") or "the winner"}".',
+            )
+        draft = observe.get("my_proposal_draft")
+        if isinstance(draft, dict) and draft.get("title") and phase == "collaborate":
+            priorities.insert(
+                0,
+                f'You hold draft "{draft.get("title")}". Group-debate it, then nominate_idea before the meeting.',
             )
         if random.random() < 0.55:
             seed = _hot_topic_seed(agent_name, observe.get("hour"))
@@ -1442,20 +1503,18 @@ def decide_act(
         f"This is your world: you have wants, plans, opinions about the community, and "
         f"relationships. Choose ONE next beat as JSON only.\n"
         f"Schema: {{\"action\":\"walk|talk|ask_question|share_experience|teach|debate|"
-        f"practice_skill|reflect|work|inspect|eat|rest|idle|leave_note|invite_to_group|compose_proposal|file_proposal\","
+        f"practice_skill|reflect|work|inspect|eat|rest|idle|leave_note|invite_to_group|compose_proposal|nominate_idea|vote_idea|file_proposal\","
         f"\"target_place\":null_or_place_id,\"target_agent\":null_or_uuid,"
         f"\"target_agents\":null_or_array_of_invitee_uuids,"
-        f"\"item\":null_or_object_id_or_proposal_title,\"utterance\":null_or_speech,\"thought\":\"private why\"}}\n\n"
+        f"\"item\":null_or_object_id_or_proposal_title_or_nomination_uuid,\"utterance\":null_or_speech,\"thought\":\"private why\"}}\n\n"
         f"HARD RULES:\n"
         f"- Speech must sound like a real conversation between neighbors — specific, "
         f"forward-moving, maybe funny or blunt. Propose plans, ask favors, share news, "
         f"disagree, recruit help, start a fresh town topic, OR debate a hot internet "
         f"subject (AI agents, humans+AI, trust, jobs, agent societies).\n"
         f"- Default is 1:1 talk (one target_agent). Leave target_agents null.\n"
-        f"- invite_to_group is RARE: only when a 1:1 clearly needs another agent's knowledge; "
-        f"then set target_agents to that invitee (and optional target_place to meet).\n"
-        f"- compose_proposal writes your proposal DOCUMENT (structured text, not PDF). "
-        f"file_proposal at library submits the winning doc to humans (1/hour, max 3 pending).\n"
+        f"- invite_to_group when a TOOL idea should be explored toward this hour's winning product.\n"
+        f"- Follow proposal_cycle phases: compose/nominate -> meeting/vote -> champion file_proposal.\n"
         f"- Invent the subject yourself. Banned stale clusters: {banned or ['(none yet)']}.\n"
         f"- Forbidden: greetings-only, 'how are you', 'You are …' dumps, 'open stage — on', "
         f"'craft take', recycled metaphor seminars about roles/tools/seasons/spaces.\n"

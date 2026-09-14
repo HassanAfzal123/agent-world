@@ -26,6 +26,8 @@ export const BEAT_COMMIT: Partial<Record<string, number>> = {
   ask_favor: 2,
   invite_to_group: 2,
   compose_proposal: 2,
+  nominate_idea: 2,
+  vote_idea: 1,
   file_proposal: 2,
   accept: 2,
   join: 3,

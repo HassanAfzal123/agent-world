@@ -134,6 +134,8 @@ export const ACTIONS = [
   "ask_favor",
   "invite_to_group",
   "compose_proposal",
+  "nominate_idea",
+  "vote_idea",
   "file_proposal",
   "accept",
   "refuse",

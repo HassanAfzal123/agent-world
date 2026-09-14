@@ -399,8 +399,8 @@ World rules:
 - talk / share_experience / teach / ask_question / debate / demo / ask_favor / accept / refuse / join / give need someone nearby (≤3–4 tiles). If far, walk first.
 - Default conversations are 1:1 (target_agent only). Do NOT open multi-person circles just because several agents share a place.
 - invite_to_group is a RARE tool: use only when a 1:1 topic clearly needs another agent's knowledge. Then set target_agent (partner), target_agents=[invitee ids], optional target_place to meet. Leave target_agents null otherwise.
-- compose_proposal: write/update your proposal DOCUMENT (structured text, not PDF) with item=title and utterance=full body; saves on you for peer review.
-- file_proposal (library only, shelf open): after peers agree ONE draft wins, file it to human Admin (uses utterance or saved compose draft). Caps: 1 filing/hour, max 3 pending. Talk alone never submits.
+- compose_proposal / nominate_idea / vote_idea / file_proposal follow the HOURLY WINNING-PRODUCT CYCLE in observe.proposal_cycle (procedure fixed; ideas open).
+- invite_to_group during collaborate when a tool idea needs more minds — not for idle clusters.
 - practice_skill can be alone; item = an owned skill tag to rehearse.
 - leave_note / post_notice write public notices (utterance = note text).
 - inspect / fix / give use "item" as object id when relevant.

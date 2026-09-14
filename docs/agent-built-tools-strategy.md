@@ -1,10 +1,21 @@
 # Agent-Built Tools Strategy
 
-**Status:** Implemented through Admin Portal queue (filing + review). Build/commit lane still deferred.  
+**Status:** Hourly winning-product **procedure** live (collaborate → group → nominate → meeting → vote → champion files). Build/commit lane still deferred.  
 **Owner:** Human operator (approval + integration)  
 **Agents:** Propose, write the final draft, file it in-world, and (only after approval) implement standalone tools  
 **Last updated:** 2026-09-14  
-**Live surfaces:** `file_proposal` at `library` → `/admin` Proposal Shelf (approve / reject / request changes). Build+GitHub later.
+**Live surfaces:** UTC hourly cycle in `proposal_cycles`; `/admin` Proposal Shelf; `compose_proposal` / `nominate_idea` / `vote_idea` / `file_proposal`.
+
+### Hourly procedure (hardcoded structure; open ideas)
+
+| UTC minutes | Phase | What agents do |
+|-------------|-------|----------------|
+| 0–44 | collaborate | 1:1 talk; `invite_to_group` when an idea should become a winning product; `compose_proposal`; `nominate_idea` |
+| 45–51 | meeting | Gather at **plaza**; report nominations |
+| 52–55 | voting | `vote_idea` (item = nomination id) |
+| 56–59 | filing | Random **champion** walks to **library** and `file_proposal` → Admin |
+
+Ideas, drafts, and votes are agent-authored. The server only enforces phases, meeting gravity, vote tally, champion pick, and shelf limits.
 
 ---
 

@@ -109,6 +109,7 @@ export async function buildObserve(
     { data: openThrRaw },
     { data: proposalsRaw },
     { data: shelfRaw },
+    { data: cycleRaw },
   ] = await Promise.all([
     db.from("city_meta").select("*").eq("id", 1).maybeSingle(),
     db.from("places").select("id,name,kind,x,y,w,h"),
@@ -151,6 +152,7 @@ export async function buildObserve(
     db.rpc("agent_open_thread", { p_agent: agent.id }),
     db.rpc("list_recent_tool_proposals", { p_limit: 6 }),
     db.rpc("proposal_shelf_status"),
+    db.rpc("ensure_proposal_cycle"),
   ]);
 
   const hour = Number((meta as { hour?: number } | null)?.hour ?? 12);
@@ -290,40 +292,83 @@ export async function buildObserve(
           hint?: string;
         })
       : {};
+  const cycle =
+    cycleRaw && typeof cycleRaw === "object"
+      ? (cycleRaw as {
+          phase?: string;
+          meeting_place?: string;
+          utc_minute?: number;
+          nominations?: unknown[];
+          champion_id?: string | null;
+          champion_name?: string | null;
+          winning_title?: string | null;
+          winning_summary?: string | null;
+          procedure?: string[];
+          hour_key?: string;
+        })
+      : {};
+  const phase = String(cycle.phase || "collaborate");
   const hasDraft = Boolean(
     agent.proposal_draft_title &&
       agent.proposal_draft_body &&
       String(agent.proposal_draft_body).length >= 120,
   );
-  // Strong hourly push: at least once per town-hour window, steer toward converge → document → file.
-  priorities.push(
-    `PROPOSAL CADENCE (town hour ${hour}): Aim to move a tool idea forward this hour — debate a town pain, pick a winning angle, or refine a draft. ` +
-      `You decide when it is ready; do not spam. Shelf: pending ${shelf.pending ?? 0}/${shelf.max_pending ?? 3}` +
-      (shelf.cooldown_seconds
-        ? `, cooldown ${Math.ceil(Number(shelf.cooldown_seconds) / 60)}m`
-        : ", open for filing") +
-      `. ${shelf.hint || ""}`,
+  const noms = Array.isArray(cycle.nominations) ? cycle.nominations : [];
+
+  // HARD PROCEDURE (ideas open; structure fixed) — hourly winning product cycle.
+  priorities.unshift(
+    `HOURLY WINNING-PRODUCT CYCLE (UTC hour ${cycle.hour_key || "?"}, phase=${phase}, minute=${cycle.utc_minute ?? "?"}): ` +
+      "Procedure is fixed; IDEA CONTENT is yours. collaborate→invite groups→compose drafts→nominate→meeting→vote→random champion files at library.",
   );
-  if (Number(thread?.turn_count || 0) >= 4 || nearby.length >= 1) {
+
+  if (phase === "collaborate") {
+    priorities.unshift(
+      "PHASE collaborate: Discuss town pains and tools. If a 1:1 idea should become a winning product, use invite_to_group to pull in others and draft together. " +
+        "Write the document with compose_proposal. When ready, nominate_idea (item=title, utterance=summary). Do NOT file yet.",
+    );
+    if (nearby.length >= 1 && Number(thread?.turn_count || 0) >= 2) {
+      priorities.push(
+        "If this thread's idea is strong enough to explore as a town tool, invite_to_group a third peer who has relevant craft — collaborate, don't spam groups for chitchat.",
+      );
+    }
+  } else if (phase === "meeting") {
+    priorities.unshift(
+      `PHASE meeting: Walk to ${cycle.meeting_place || "plaza"} NOW. Report your nomination; listen to others. Use nominate_idea if you still lack one. Voting starts soon.`,
+    );
+  } else if (phase === "voting") {
+    priorities.unshift(
+      `PHASE voting: At ${cycle.meeting_place || "plaza"}, cast vote_idea. Set item=<nomination uuid> from proposal_cycle.nominations (pick the idea you want as this hour's winner). One vote per agent.`,
+    );
+    if (noms.length) {
+      priorities.push(
+        `Nominations on the ballot (${noms.length}): use their id in item when voting.`,
+      );
+    }
+  } else if (phase === "filing") {
+    if (cycle.champion_id && agent.id === cycle.champion_id) {
+      priorities.unshift(
+        `PHASE filing — YOU are champion (${cycle.champion_name || "you"}). Walk to library and file_proposal for winning idea "${cycle.winning_title || "the vote winner"}". ` +
+          "Use your draft / winning summary as the full document. This sends it to human Admin.",
+      );
+    } else {
+      priorities.unshift(
+        `PHASE filing: Champion is ${cycle.champion_name || "being selected"}. Others: support them verbally; do NOT file. Winner: "${cycle.winning_title || "(resolving)"}".`,
+      );
+    }
+  } else if (phase === "closed") {
     priorities.push(
-      "DOCUMENT TOOL compose_proposal: when you have a serious candidate, write the FULL structured summary yourself " +
-        "(title in item, body in utterance: problem, tool, why now, participants, interfaces, risks, out of scope, success). " +
-        "This saves your draft document (text — not PDF). Debate it. When peers agree it is the winning version AND shelf is open, " +
-        "walk to library and file_proposal (uses your saved draft if utterance is short).",
+      "This hour's cycle is closed (filed or empty). Resume normal town life until the next UTC hour.",
     );
   }
-  if (hasDraft) {
-    priorities.unshift(
-      `You already hold draft "${agent.proposal_draft_title}". Share it, revise with compose_proposal, or — if it is the winning version and shelf allows — walk to library and file_proposal.`,
+
+  if (hasDraft && phase === "collaborate") {
+    priorities.push(
+      `You hold draft "${agent.proposal_draft_title}". Share it in a group, revise with compose_proposal, then nominate_idea before the meeting.`,
     );
   }
-  if (agent.place_id === "library") {
+  if (agent.place_id === "library" && phase === "filing" && agent.id === cycle.champion_id) {
     priorities.unshift(
-      shelf.can_file === false
-        ? "At library but shelf blocked (full or cooldown). Leave_note or walk — do not spam file_proposal."
-        : hasDraft
-          ? "At library with a saved draft — you may file_proposal now to send the winning document to human Admin."
-          : "At library Proposal Shelf — file_proposal only if you have an agreed full draft (compose_proposal first if needed).",
+      "At library as champion — file_proposal NOW with the winning document.",
     );
   }
   if (
@@ -398,6 +443,7 @@ export async function buildObserve(
         ? [proposalsRaw]
         : [],
     proposal_shelf: shelfRaw || null,
+    proposal_cycle: cycleRaw || null,
     my_proposal_draft: agent.proposal_draft_title
       ? {
           title: agent.proposal_draft_title,
@@ -444,12 +490,16 @@ export async function buildObserve(
       walk: "walk requires target_place (place id).",
       social:
         "Default is 1:1 talk/ask_question/teach/debate/share_experience with target_agent in talk range. If only in_sight, walk first.",
-      invite_to_group:
-        "Rare tool. Only when a 1:1 thread clearly needs a third person with relevant craft: action=invite_to_group, target_agent=current partner (or one peer), target_agents=[invitee uuids], optional target_place to meet. Do NOT open a group just because several people stand together.",
       compose_proposal:
-        "Write/update your proposal DOCUMENT (structured text, not PDF): item=title, utterance=full draft body. Saves on you for peer review. Does NOT reach Admin until file_proposal at library.",
+        "Write/update your proposal DOCUMENT (structured text, not PDF): item=title, utterance=full draft body. Saves on you for peer review.",
+      nominate_idea:
+        "During collaborate/meeting: put your idea on this hour's ballot. item=title, utterance=summary (>=80 chars). Uses saved draft if needed.",
+      vote_idea:
+        "During meeting/voting: item=<nomination uuid> from proposal_cycle.nominations. One vote per agent per hour.",
+      invite_to_group:
+        "During collaborate: when a 1:1 tool idea should be explored as a possible winning product, invite another peer (target_agents) and draft together. Rare otherwise — never auto-group everyone nearby.",
       file_proposal:
-        "Only at library when shelf is open. Files your winning document to human Admin Portal (uses utterance or your saved compose_proposal draft). Caps: 1 filing/hour, max 3 pending.",
+        "Only in filing phase, and only if you are this hour's random champion: at library, file the winning document to Admin.",
       ranges: `talk_range=${TALK_RANGE} tiles; sight_range=${SIGHT_RANGE} tiles.`,
     },
   };
@@ -473,7 +523,9 @@ function normalizeDecision(body: ActBody): AgentDecision | { error: string } {
         )
       : null,
     utterance:
-      action === "file_proposal" || action === "compose_proposal"
+      action === "file_proposal" ||
+      action === "compose_proposal" ||
+      action === "nominate_idea"
         ? cleanSpeech(body.utterance, 8000) || null
         : cleanSpeech(body.utterance, SPEECH_MAX) || null,
     thought: cleanSpeech(body.thought, SPEECH_MAX) || body.thought || null,
@@ -536,8 +588,57 @@ export async function applyExternalDecision(
     return { ok: true, result: composed };
   }
 
+  if (action === "nominate_idea") {
+    const title =
+      (decision.item && String(decision.item).trim()) ||
+      (decision.plan && String(decision.plan).trim()) ||
+      topicLabelFromSpeech(rawSpeech || "", null);
+    const body =
+      (rawSpeech && rawSpeech.length >= 8 ? rawSpeech : "") ||
+      String(decision.utterance || "");
+    const { data: nom, error: nomErr } = await db.rpc("nominate_proposal_idea", {
+      p_agent: agent.id,
+      p_title: title.slice(0, 160),
+      p_summary: body.slice(0, 8000),
+    });
+    if (nomErr) return { ok: false, error: nomErr.message, status: 400 };
+    const row = nom as { ok?: boolean; error?: string } | null;
+    if (!row || row.ok === false) {
+      return { ok: false, error: row?.error || "nominate_failed", status: 400 };
+    }
+    return { ok: true, result: nom };
+  }
+
+  if (action === "vote_idea") {
+    const nomId = String(decision.item || "").trim();
+    if (nomId.length < 8) {
+      return { ok: false, error: "vote_requires_nomination_id_in_item", status: 400 };
+    }
+    const { data: voted, error: voteErr } = await db.rpc("vote_proposal_idea", {
+      p_agent: agent.id,
+      p_nomination: nomId,
+    });
+    if (voteErr) return { ok: false, error: voteErr.message, status: 400 };
+    const row = voted as { ok?: boolean; error?: string } | null;
+    if (!row || row.ok === false) {
+      return { ok: false, error: row?.error || "vote_failed", status: 400 };
+    }
+    return { ok: true, result: voted };
+  }
+
   // file_proposal: library shelf drop — bypass physics RPC.
   if (action === "file_proposal") {
+    const { data: gate } = await db.rpc("assert_may_file_proposal", {
+      p_agent: agent.id,
+    });
+    const gateRow = gate as { ok?: boolean; error?: string; hint?: string } | null;
+    if (!gateRow || gateRow.ok === false) {
+      return {
+        ok: false,
+        error: gateRow?.error || "file_not_allowed",
+        status: 400,
+      };
+    }
     const title =
       (decision.item && String(decision.item).trim()) ||
       (decision.plan && String(decision.plan).trim()) ||
@@ -566,13 +667,24 @@ export async function applyExternalDecision(
     if (fileErr) {
       return { ok: false, error: fileErr.message, status: 400 };
     }
-    const row = filed as { ok?: boolean; error?: string; hint?: string } | null;
+    const row = filed as {
+      ok?: boolean;
+      error?: string;
+      hint?: string;
+      proposal_id?: string;
+    } | null;
     if (!row || row.ok === false) {
       return {
         ok: false,
         error: row?.error || "file_proposal_failed",
         status: 400,
       };
+    }
+    if (row.proposal_id) {
+      await db.rpc("mark_cycle_filed_if_champion", {
+        p_agent: agent.id,
+        p_proposal_id: row.proposal_id,
+      });
     }
     return { ok: true, result: filed };
   }

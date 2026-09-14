@@ -247,6 +247,58 @@ export function forceEventGatherDecision(
   };
 }
 
+/** Hourly winning-product meeting / voting: pull free agents to plaza. */
+export function forceProposalMeetingDecision(
+  agent: Agent,
+  phase: string | null | undefined,
+  meetingPlace: string | null | undefined,
+): AgentDecision | null {
+  if (phase !== "meeting" && phase !== "voting") return null;
+  const place = meetingPlace || "plaza";
+  if (agent.place_id === place) return null;
+  if (agent.pending_answer_to) return null;
+  if (agent.appointment_with || agent.appointment_place) return null;
+  if (
+    agent.status === "walking" &&
+    agent.target_place_id &&
+    agent.target_place_id !== place
+  ) {
+    return null;
+  }
+  if (agent.status === "talking" && phase === "meeting") return null;
+  return {
+    action: "walk",
+    target_place: place,
+    thought: `Hourly tool ${phase} — heading to ${place}.`,
+    utterance: null,
+    item: null,
+  };
+}
+
+/** Filing phase: champion walks to library. */
+export function forceProposalFilingDecision(
+  agent: Agent,
+  phase: string | null | undefined,
+  championId: string | null | undefined,
+): AgentDecision | null {
+  if (phase !== "filing") return null;
+  if (!championId || agent.id !== championId) return null;
+  if (agent.place_id === "library") return null;
+  if (
+    agent.status === "walking" &&
+    agent.target_place_id === "library"
+  ) {
+    return null;
+  }
+  return {
+    action: "walk",
+    target_place: "library",
+    thought: "I am this hour's filing champion — walking to the library Proposal Shelf.",
+    utterance: null,
+    item: null,
+  };
+}
+
 /** True when this agent should speak with an open mind (prefer LLM). */
 export function needsOpenMindSpeech(
   agent: Agent,
