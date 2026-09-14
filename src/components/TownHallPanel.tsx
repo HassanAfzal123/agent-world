@@ -4,13 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import {
   isTownHallLive,
   minutesLeftInPhase,
-  minutesToNextMeeting,
   normalizePhase,
   parseTownHallCycle,
   phaseBlurb,
   phaseLabel,
   pickSelectedNomination,
-  TOWN_HALL_MEETING_MINUTE,
+  resolveMinsToMeeting,
   type TownHallCycle,
 } from "@/lib/townHall";
 
@@ -65,8 +64,12 @@ export function TownHallPanel({ variant = "strip", pollMs = 15000 }: Props) {
     const phase = normalizePhase(cycle.phase);
     const live = isTownHallLive(phase);
     const selected = pickSelectedNomination(cycle);
-    const nextIn = minutesToNextMeeting(cycle.utc_minute);
-    const left = minutesLeftInPhase(phase, cycle.utc_minute);
+    const nextIn = resolveMinsToMeeting(cycle);
+    const left = minutesLeftInPhase(
+      phase,
+      cycle.utc_minute,
+      cycle.forced ? cycle.session_offset_min : null,
+    );
     const maxVotes = Math.max(
       0,
       ...cycle.nominations.map((n) => n.vote_count),
@@ -198,9 +201,9 @@ export function TownHallPanel({ variant = "strip", pollMs = 15000 }: Props) {
 
       {!live ? (
         <p className="muted tiny town-hall-next">
-          Town Hall Meeting opens at UTC :
-          {String(TOWN_HALL_MEETING_MINUTE).padStart(2, "0")} each hour ·{" "}
-          {nextIn} min to go
+          {cycle.forced || cycle.in_gather
+            ? `Scheduled Town Hall · ${nextIn} min to go · gather at ${place}`
+            : `Next Town Hall in ${nextIn} min · gather at ${place}`}
         </p>
       ) : null}
     </section>

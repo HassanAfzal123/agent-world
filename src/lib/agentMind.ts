@@ -511,6 +511,10 @@ export async function buildObserve(
     meeting_in_minutes:
       phase === "collaborate"
         ? (() => {
+            const fromCycle = Number(
+              (cycle as { mins_to_meeting?: number }).mins_to_meeting,
+            );
+            if (Number.isFinite(fromCycle)) return Math.max(0, fromCycle);
             const m = Number(cycle.utc_minute ?? 0);
             return m < 41 ? Math.max(0, 41 - m) : Math.max(0, 60 - m + 41);
           })()

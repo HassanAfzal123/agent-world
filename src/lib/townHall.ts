@@ -39,6 +39,13 @@ export type TownHallCycle = {
   winning_title?: string | null;
   winning_summary?: string | null;
   filed_proposal_id?: string | null;
+  /** From DB ensure_proposal_cycle — preferred over legacy :41 math. */
+  mins_to_meeting?: number | null;
+  forced?: boolean;
+  in_gather?: boolean;
+  meeting_at?: string | null;
+  next_meeting_at?: string | null;
+  session_offset_min?: number | null;
 };
 
 export type TownHallPhase =
@@ -105,7 +112,16 @@ export function phaseFromSlotElapsed(elapsedMin: number): TownHallPhase {
 export function minutesLeftInPhase(
   phase: TownHallPhase,
   utcMinute: number,
+  sessionOffsetMin?: number | null,
 ): number | null {
+  // Forced / 3×day sessions use offset from meeting start, not clock minute.
+  if (sessionOffsetMin != null && Number.isFinite(sessionOffsetMin)) {
+    const o = Math.floor(sessionOffsetMin);
+    if (phase === "meeting") return Math.max(0, SLOT_VOTING_MIN - o);
+    if (phase === "voting") return Math.max(0, SLOT_FILING_MIN - o);
+    if (phase === "filing") return Math.max(0, SLOT_END_MIN - o);
+    return null;
+  }
   const m = Math.floor(utcMinute);
   if (phase === "meeting") {
     return Math.max(0, TOWN_HALL_VOTING_MINUTE - m);
@@ -117,6 +133,17 @@ export function minutesLeftInPhase(
     return Math.max(0, TOWN_HALL_COLLAB_RESUME_MINUTE - m);
   }
   return null;
+}
+
+/** Prefer DB mins_to_meeting; fall back to legacy hourly :41. */
+export function resolveMinsToMeeting(cycle: TownHallCycle): number {
+  if (
+    cycle.mins_to_meeting != null &&
+    Number.isFinite(cycle.mins_to_meeting)
+  ) {
+    return Math.max(0, Math.floor(cycle.mins_to_meeting));
+  }
+  return minutesToNextMeeting(cycle.utc_minute);
 }
 
 export function phaseLabel(phase: TownHallPhase): string {
@@ -215,5 +242,19 @@ export function parseTownHallCycle(raw: unknown): TownHallCycle | null {
       o.winning_summary != null ? String(o.winning_summary) : null,
     filed_proposal_id:
       o.filed_proposal_id != null ? String(o.filed_proposal_id) : null,
+    mins_to_meeting:
+      o.mins_to_meeting != null && Number.isFinite(Number(o.mins_to_meeting))
+        ? Number(o.mins_to_meeting)
+        : null,
+    forced: o.forced === true,
+    in_gather: o.in_gather === true,
+    meeting_at: o.meeting_at != null ? String(o.meeting_at) : null,
+    next_meeting_at:
+      o.next_meeting_at != null ? String(o.next_meeting_at) : null,
+    session_offset_min:
+      o.session_offset_min != null &&
+      Number.isFinite(Number(o.session_offset_min))
+        ? Number(o.session_offset_min)
+        : null,
   };
 }
