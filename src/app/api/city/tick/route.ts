@@ -24,11 +24,13 @@ import {
   councilTopicFromAgents,
   forceAppointmentDecision,
   forceCouncilDecision,
+  forceEventGatherDecision,
   hauntWalkDecision,
   needsOpenMindSpeech,
   topicFromUtterance,
 } from "@/lib/society";
 import { cleanSpeech, fullSpeech, SPEECH_MAX, TOPIC_MAX } from "@/lib/spectator";
+import { topicLabelFromSpeech } from "@/lib/agentMind";
 import { pickMeetupPlace, placeIsBusy } from "@/lib/meetupPlaces";
 import {
   craftFreshQuestion,
@@ -339,7 +341,12 @@ export async function POST(req: Request) {
                 eventPlace,
                 eventTopic,
               );
-        const forcedSociety = forcedAnswer || forcedAppt || forcedCouncil;
+        const forcedAmbient =
+          forcedAnswer || forcedAppt || forcedCouncil
+            ? null
+            : forceEventGatherDecision(agent, allLlm, eventName, eventPlace);
+        const forcedSociety =
+          forcedAnswer || forcedAppt || forcedCouncil || forcedAmbient;
         const budgetExhausted = llmCallsThisTick >= MAX_LLM_PER_TICK;
         const openMindNow =
           needsOpenMindSpeech(
@@ -740,11 +747,10 @@ export async function POST(req: Request) {
                     speechBody,
                   )))
             ) {
-              const topicRaw = (
-                decision.item ||
-                agent.pending_answer_topic ||
-                speechBody
-              ).slice(0, TOPIC_MAX);
+              const topicRaw = topicLabelFromSpeech(
+                speechBody,
+                decision.item || agent.pending_answer_topic,
+              );
               const relsForPair = ((relationships as Relationship[]) || []).filter(
                 (r) =>
                   (r.agent_id === agent.id && r.other_id === socialPeer) ||
@@ -776,7 +782,7 @@ export async function POST(req: Request) {
                     )
                   ) {
                     openBody = q.utterance;
-                    openTopic = q.item;
+                    openTopic = topicLabelFromSpeech(q.utterance, q.item);
                   } else {
                     openBody = "";
                   }

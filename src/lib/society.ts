@@ -212,6 +212,41 @@ export function forceCouncilDecision(
   };
 }
 
+/**
+ * Ambient town events (rain_break, market_day, quiet_afternoon, …) should also
+ * pull free agents toward event_place — softer than council but not ignoreable.
+ */
+export function forceEventGatherDecision(
+  agent: Agent,
+  _peers: Agent[],
+  eventName: string | null | undefined,
+  eventPlace: string | null | undefined,
+): AgentDecision | null {
+  if (!eventName || !eventPlace) return null;
+  if (eventName === COUNCIL_EVENT) return null; // handled by forceCouncilDecision
+  if (agent.place_id === eventPlace) return null;
+  if (agent.pending_answer_to) return null;
+  if (agent.appointment_with || agent.appointment_place) return null;
+  if (agent.commit_action === "dialogue") return null;
+  if (
+    agent.status === "walking" &&
+    agent.target_place_id &&
+    agent.target_place_id !== eventPlace
+  ) {
+    return null;
+  }
+  // Soft herding: only when idle / arrived, not mid-speech.
+  if (agent.status === "talking") return null;
+
+  return {
+    action: "walk",
+    target_place: eventPlace,
+    thought: null,
+    utterance: null,
+    item: null,
+  };
+}
+
 /** True when this agent should speak with an open mind (prefer LLM). */
 export function needsOpenMindSpeech(
   agent: Agent,

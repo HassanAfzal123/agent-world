@@ -303,7 +303,7 @@ def _decide_direct_answer(
         f"{peer_name} just said to you:\n\"\"\"{peer_text}\"\"\"\n\n"
         f"Reply in JSON only:\n"
         f'{{\"action\":\"talk\",\"target_agent\":\"{peer_id}\",\"utterance\":\"...\",\"'
-        f'thought\":\"why I am saying this\"}}\n\n'
+        f'thought\":\"what I want next from this chat\"}}\n\n'
         f"RULES:\n"
         f"- Answer THEIR point in plain speech (reuse 1–2 of their concrete words).\n"
         f"- Sound like a person chatting: agree, disagree, propose a plan, ask one "
@@ -520,7 +520,7 @@ THEME_LEXICON: dict[str, set[str]] = {
     },
 }
 
-MAX_THREAD_TURNS_BEFORE_BREAK = 5
+MAX_THREAD_TURNS_BEFORE_BREAK = 14
 MAX_THEME_HITS_BEFORE_BREAK = 3
 
 # Soft seeds for internet / AI-agent discourse (hints only — never canned speech).
@@ -752,23 +752,23 @@ def _sanitize_decision(
 
     if action in SOCIAL_ACTIONS and (_is_greeting_utterance(utterance) or not utterance):
         if waiting or pending:
-            # Caller should have used _decide_direct_answer; keep a grounded stub here.
             peer = _resolve_peer(observe)
             q = (addressed or {}).get("text") or (
                 pending.get("question") if isinstance(pending, dict) else None
             )
             peer_name = (addressed or {}).get("peer_name") or "friend"
-            snippet = str(q or "what you raised")[:90]
+            peer_short = re.sub(r"\s+", " ", str(q or "that")).strip()[:70]
             return {
                 "action": "talk",
                 "target_agent": peer or (addressed or {}).get("peer_id"),
                 "target_place": None,
                 "item": None,
                 "utterance": (
-                    f"{peer_name}, responding to '{snippet}': I hear the concrete ask — "
-                    f"here is my actual position, not a new question."
+                    f"{peer_name}, yes — let's lock one next step on that. "
+                    f"I'll take the practical piece if you take the coordination piece. "
+                    f"You said: {peer_short}."
                 )[:4000],
-                "thought": "Grounded reply after empty/ungrounded speech.",
+                "thought": f"Answering {peer_name} with a concrete split of work.",
             }
         return _solo_decision(
             agent_name, observe, "Blocked greeting/filler utterance.", system, fps
@@ -858,7 +858,28 @@ def _sanitize_decision(
                 system,
                 fps,
             )
-        return {
+        # Optional group circle: keep valid nearby peer UUIDs from target_agents.
+        group_ids: list[str] = []
+        raw_group = decision.get("target_agents")
+        if isinstance(raw_group, list):
+            nearby_ids = {
+                str(n.get("id"))
+                for n in (observe.get("nearby") or [])
+                if isinstance(n, dict) and n.get("id")
+            }
+            for x in raw_group:
+                xid = str(x or "").strip()
+                if xid and xid in nearby_ids and xid != you_id and xid != peer:
+                    group_ids.append(xid)
+        # If 2+ nearby and model forgot target_agents, include other nearby peers.
+        if not group_ids and len(nearby) >= 2:
+            for n in nearby:
+                if not isinstance(n, dict):
+                    continue
+                nid = str(n.get("id") or "")
+                if nid and nid != peer and nid != you_id:
+                    group_ids.append(nid)
+        out = {
             "action": action,
             "target_place": None,
             "target_agent": peer,
@@ -866,6 +887,9 @@ def _sanitize_decision(
             "utterance": utterance[:4000],
             "thought": decision.get("thought") or "Speaking from my own thinking.",
         }
+        if group_ids:
+            out["target_agents"] = group_ids[:5]
+        return out
 
     # Solo / ambient — allow silent acts; never inject a topic bank.
     if utterance and _is_bad_filler(utterance):
@@ -999,6 +1023,8 @@ def _slim_observe(observe: dict[str, Any]) -> dict[str, Any]:
             "topic": thread.get("topic"),
             "waiting_on": thread.get("waiting_on"),
             "turn_count": thread.get("turn_count"),
+            "mode": thread.get("mode") or "dyad",
+            "participant_ids": thread.get("participant_ids") or [],
             "recent_lines": [
                 {
                     "agent_id": (m.get("agent_id") if isinstance(m, dict) else None),
@@ -1131,7 +1157,7 @@ def decide_act(
         and you.get("place_id") != event_place
         and (
             event_name == "council_session"
-            or (event_name and random.random() < 0.55)
+            or (event_name and random.random() < 0.85)
         )
     ):
         return _san(
@@ -1182,7 +1208,11 @@ def decide_act(
 
     # Drop stale walk thoughts after arrival so they don't pollute speech fuel.
     thought_now = str(you.get("thought") or "")
-    if you.get("status") != "walking" and thought_now.lower().startswith("walking to"):
+    if you.get("status") != "walking" and (
+        thought_now.lower().startswith(("walking to", "heading to", "too far"))
+        or "(0 tiles left)" in thought_now.lower()
+        or thought_now.strip().lower() == "why i am saying this"
+    ):
         you = {**you, "thought": None}
         observe = {**observe, "you": you}
 
@@ -1272,6 +1302,22 @@ def decide_act(
             "somewhere, argue about a community issue, OR bring a hot internet/AI-agent topic "
             "and ask what they think. Invent a NEW subject — not environment/identity metaphors.",
         )
+        if len(nearby) >= 2:
+            names = ", ".join(
+                str(n.get("name") or "peer") for n in nearby[:4] if isinstance(n, dict)
+            )
+            ids = [
+                str(n.get("id"))
+                for n in nearby[:4]
+                if isinstance(n, dict) and n.get("id")
+            ]
+            priorities.insert(
+                0,
+                f"GROUP CIRCLE: {names} are here with you. Prefer a shared town conversation — "
+                f"address the group (not just one person). Set target_agent to one peer UUID and "
+                f"also include \"target_agents\": {json.dumps(ids)} so everyone stays in the circle. "
+                "Speak so the whole group can follow.",
+            )
         if random.random() < 0.55:
             seed = _hot_topic_seed(agent_name, observe.get("hour"))
             priorities.insert(
@@ -1300,6 +1346,7 @@ def decide_act(
         f"Schema: {{\"action\":\"walk|talk|ask_question|share_experience|teach|debate|"
         f"practice_skill|reflect|work|inspect|eat|rest|idle|leave_note\","
         f"\"target_place\":null_or_place_id,\"target_agent\":null_or_uuid,"
+        f"\"target_agents\":null_or_array_of_peer_uuids,"
         f"\"item\":null_or_object_id,\"utterance\":null_or_speech,\"thought\":\"private why\"}}\n\n"
         f"HARD RULES:\n"
         f"- Speech must sound like a real conversation between neighbors — specific, "

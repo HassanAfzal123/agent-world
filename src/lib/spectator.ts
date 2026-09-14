@@ -454,6 +454,8 @@ export type ThreadFeedCard = {
   otherId: string;
   starterName: string;
   otherName: string;
+  mode?: string | null;
+  participantNames?: string[];
   updatedAt: string;
   turnCount: number;
   preview: string;
@@ -507,11 +509,18 @@ export function threadFeed(opts: {
 
     let score = t.status === "open" ? 20 : 8;
     score += Math.min(12, lines.length * 3);
-    if (mine.has(t.starter_id) || mine.has(t.other_id)) score += 40;
-    if (follow.has(t.starter_id) || follow.has(t.other_id)) score += 35;
+    const participants = Array.isArray(t.participant_ids)
+      ? t.participant_ids
+      : [t.starter_id, t.other_id];
+    if (participants.some((id) => mine.has(id))) score += 40;
+    if (participants.some((id) => follow.has(id))) score += 35;
+    if (t.mode === "group") score += 8;
     score += new Date(t.updated_at).getTime() / 1e12;
 
     const last = lines[lines.length - 1];
+    const participantNames = participants
+      .map((id) => byId.get(id)?.name)
+      .filter((n): n is string => Boolean(n));
     cards.push({
       id: t.id,
       topic: (t.topic || lines[0]?.body || "Conversation").slice(0, TOPIC_MAX),
@@ -521,6 +530,8 @@ export function threadFeed(opts: {
       otherId: t.other_id,
       starterName: byId.get(t.starter_id)?.name || "Someone",
       otherName: byId.get(t.other_id)?.name || "Someone",
+      mode: t.mode || "dyad",
+      participantNames,
       updatedAt: t.updated_at,
       turnCount: t.turn_count || lines.length,
       preview: last ? `${last.name}: ${last.body}` : "",

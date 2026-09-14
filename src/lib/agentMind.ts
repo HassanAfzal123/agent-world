@@ -26,6 +26,8 @@ export type ActBody = {
   action: string;
   target_place?: string | null;
   target_agent?: string | null;
+  /** Extra peers for group / circle talk (optional). */
+  target_agents?: string[] | null;
   utterance?: string | null;
   thought?: string | null;
   item?: string | null;
@@ -35,12 +37,12 @@ export type ActBody = {
 const ACTION_SET = new Set<string>([...ACTIONS, "continue"]);
 
 /** Short thread title from speech — never use junk tags like open_stage. */
-function topicLabelFromSpeech(
+export function topicLabelFromSpeech(
   speech: string,
   item?: string | null,
 ): string {
   const junk =
-    /^(open_stage|craft_tip|practice|reflection|curiosity|debate_insight|demo_method|shared_practice|work_day)$/i;
+    /^(open_stage|craft_tip|practice|reflection|curiosity|curiosity_[a-z0-9_]+|debate_insight|demo_method|shared_practice|work_day)$/i;
   const preferred =
     item && !junk.test(item.trim()) ? item.trim().slice(0, TOPIC_MAX) : "";
   if (preferred) return preferred;
@@ -50,6 +52,10 @@ function topicLabelFromSpeech(
   // Drop known stub prefixes from titles.
   t = t.replace(
     /^(i('m| am) in — let's treat that as a real town next-step\.\s*)/i,
+    "",
+  );
+  t = t.replace(
+    /^(i hear the concrete ask\s*[—\-].*?:\s*)/i,
     "",
   );
   const clause = t.split(/[.!?]/)[0]?.trim() || t;
@@ -241,6 +247,19 @@ export async function buildObserve(
       `Town event "${eventName || "happening"}" is at ${eventPlace}. Prefer walking there to join what is going on (unless answering someone nearby).`,
     );
   }
+  const samePlaceCount = everyone.filter(
+    (a) =>
+      a.id !== agent.id &&
+      a.place_id &&
+      agent.place_id &&
+      a.place_id === agent.place_id &&
+      a.claim_status === "claimed",
+  ).length;
+  if (samePlaceCount >= 2) {
+    priorities.unshift(
+      `GROUP CIRCLE: ${samePlaceCount} other agents are here with you. Prefer a shared conversation — include target_agents with their ids so the whole group stays in one thread. Speak for the circle, not only one pair.`,
+    );
+  }
   if (agent.pending_answer_to) {
     const q = (agent.pending_answer_question || "").trim().slice(0, 200);
     priorities.push(
@@ -380,6 +399,11 @@ function normalizeDecision(body: ActBody): AgentDecision | { error: string } {
     action: action as AgentDecision["action"],
     target_place: body.target_place ?? null,
     target_agent: body.target_agent ?? null,
+    target_agents: Array.isArray(body.target_agents)
+      ? body.target_agents.filter(
+          (id): id is string => typeof id === "string" && id.length > 8,
+        )
+      : null,
     utterance: cleanSpeech(body.utterance, SPEECH_MAX) || null,
     thought: cleanSpeech(body.thought, SPEECH_MAX) || body.thought || null,
     item: body.item ?? null,
@@ -486,6 +510,39 @@ export async function applyExternalDecision(
     fullSpeech(rawSpeech) ||
     cleanSpeech(decision.utterance || decision.thought || "", 0);
   const socialPeer = decision.target_agent || null;
+  const extraPeers = Array.isArray(decision.target_agents)
+    ? decision.target_agents.filter(
+        (id): id is string =>
+          typeof id === "string" &&
+          id.length > 8 &&
+          id !== agent.id &&
+          id !== socialPeer,
+      )
+    : [];
+  // Auto-promote to group when 2+ other claimed agents share this place.
+  const samePlacePeers = peers
+    .filter(
+      (p) =>
+        p.place_id &&
+        agent.place_id &&
+        p.place_id === agent.place_id &&
+        p.id !== agent.id,
+    )
+    .map((p) => p.id);
+  const groupPeerIds = Array.from(
+    new Set(
+      [socialPeer, ...extraPeers, ...samePlacePeers].filter(
+        (id): id is string => Boolean(id),
+      ),
+    ),
+  );
+  const wantGroup =
+    groupPeerIds.length >= 2 &&
+    (extraPeers.length > 0 ||
+      samePlacePeers.length >= 2 ||
+      (activeThread?.mode === "group" &&
+        Array.isArray(activeThread.participant_ids) &&
+        activeThread.participant_ids.length >= 3));
   let momentThreadId: string | null = activeThread?.id || null;
 
   const socialActions = new Set([
@@ -514,11 +571,20 @@ export async function applyExternalDecision(
     "start_shift",
   ]);
 
+  const isThreadParticipant = (thr: ConversationThread | null | undefined) => {
+    if (!thr || thr.status !== "open") return false;
+    if (thr.starter_id === agent.id || thr.other_id === agent.id) return true;
+    if (Array.isArray(thr.participant_ids) && thr.participant_ids.includes(agent.id)) {
+      return true;
+    }
+    return false;
+  };
+
   if (
     speechBody &&
     speechBody.length >= 8 &&
-    socialPeer &&
-    socialActions.has(finalAction)
+    socialActions.has(finalAction) &&
+    (socialPeer || wantGroup)
   ) {
     const { data: lastMsgs } =
       activeThread?.status === "open"
@@ -534,11 +600,13 @@ export async function applyExternalDecision(
 
     if (!isRepeatThreadLine(speechBody, lastBody)) {
       const inOpenThread =
-        activeThread?.status === "open" &&
-        (activeThread.starter_id === agent.id ||
-          activeThread.other_id === agent.id) &&
-        (socialPeer === activeThread.starter_id ||
-          socialPeer === activeThread.other_id);
+        isThreadParticipant(activeThread) &&
+        (activeThread!.mode === "group" ||
+          (socialPeer &&
+            (socialPeer === activeThread!.starter_id ||
+              socialPeer === activeThread!.other_id ||
+              (Array.isArray(activeThread!.participant_ids) &&
+                activeThread!.participant_ids.includes(socialPeer)))));
 
       if (inOpenThread && activeThread) {
         const kind =
@@ -558,8 +626,6 @@ export async function applyExternalDecision(
           momentThreadId = activeThread.id;
         }
       } else if (
-        // Any real social speech to a peer should open a thread — not only
-        // ask_question / talk-with-?. Otherwise share_experience is silent.
         !/^(hey|hi|hello)\b/i.test(speechBody) &&
         !/\bhow are you\b/i.test(speechBody)
       ) {
@@ -567,28 +633,50 @@ export async function applyExternalDecision(
           speechBody,
           decision.item || agent.pending_answer_topic,
         );
-        const { data: opened } = await db.rpc("open_conversation", {
-          p_starter: agent.id,
-          p_other: socialPeer,
-          p_topic: topicRaw,
-          p_body: speechBody,
-          p_place: agent.place_id,
-          p_max_turns: 24,
-        });
-        if (opened) {
-          activeThread = opened as ConversationThread;
-          momentThreadId = activeThread.id;
+        if (wantGroup && groupPeerIds.length >= 2) {
+          const { data: opened } = await db.rpc("open_group_conversation", {
+            p_starter: agent.id,
+            p_participants: groupPeerIds,
+            p_topic: topicRaw,
+            p_body: speechBody,
+            p_place: agent.place_id,
+            p_max_turns: 36,
+          });
+          if (opened) {
+            activeThread = opened as ConversationThread;
+            momentThreadId = activeThread.id;
+          }
+        } else if (socialPeer) {
+          const { data: opened } = await db.rpc("open_conversation", {
+            p_starter: agent.id,
+            p_other: socialPeer,
+            p_topic: topicRaw,
+            p_body: speechBody,
+            p_place: agent.place_id,
+            p_max_turns: 32,
+          });
+          if (opened) {
+            activeThread = opened as ConversationThread;
+            momentThreadId = activeThread.id;
+          }
         }
       }
     }
   }
 
-  // Solo beats leave the conversation so agents are not dialogue-locked forever.
+  // Solo beats leave the conversation — but don't kill short/live threads on a walk.
+  const turns = Number(activeThread?.turn_count || 0);
+  const keepAliveOnWalk =
+    finalAction === "walk" &&
+    activeThread?.status === "open" &&
+    (turns < 10 ||
+      activeThread.mode === "group" ||
+      Boolean(activeThread.waiting_on));
   if (
     soloLeaveActions.has(finalAction) &&
     activeThread?.status === "open" &&
-    (activeThread.starter_id === agent.id ||
-      activeThread.other_id === agent.id)
+    isThreadParticipant(activeThread) &&
+    !keepAliveOnWalk
   ) {
     await db.rpc("close_conversation", { p_thread: activeThread.id });
     activeThread = { ...activeThread, status: "closed", waiting_on: null };
@@ -599,11 +687,24 @@ export async function applyExternalDecision(
     typeof finalData === "object" &&
     (finalData as { arrived?: boolean }).arrived === true;
 
+  // Clear stale walk thoughts after arrival so they don't pollute later speech.
+  if (arrived) {
+    const th = String(agent.thought || "");
+    if (
+      /^(walking to|heading to|too far — walking)/i.test(th) ||
+      /\(0 tiles left\)/i.test(th)
+    ) {
+      await db.from("agents").update({ thought: null }).eq("id", agent.id);
+    }
+  }
+
   const stayInDialogue =
     activeThread?.status === "open" &&
     socialActions.has(finalAction) &&
     (activeThread.starter_id === agent.id ||
-      activeThread.other_id === agent.id);
+      activeThread.other_id === agent.id ||
+      (Array.isArray(activeThread.participant_ids) &&
+        activeThread.participant_ids.includes(agent.id)));
 
   const arrivalCommit = arrived
     ? commitmentAfterArrival(
@@ -830,6 +931,28 @@ export async function applyExternalDecision(
         agent.id,
         `Debated with ${agent.name} — "${pretty}": ${method}`,
       );
+    }
+
+    // Also grow lessons from substantive social talk (was teach/share-only in SQL).
+    if (
+      (speechBody?.length || 0) >= 100 &&
+      ["talk", "ask_question", "debate", "share_experience", "teach"].includes(
+        finalAction,
+      )
+    ) {
+      const lessonTopic = topicLabelFromSpeech(
+        speechBody || "",
+        decision.item,
+      ).slice(0, 80);
+      if (lessonTopic && !/^(town talk|curiosity)/i.test(lessonTopic)) {
+        await db.from("agent_lessons").insert({
+          learner_id: agent.id,
+          teacher_id: decision.target_agent || null,
+          topic: lessonTopic,
+          lesson: (speechBody || "").slice(0, 2000),
+          place_id: agent.place_id,
+        });
+      }
     }
     }
   }

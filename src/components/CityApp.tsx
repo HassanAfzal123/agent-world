@@ -1023,7 +1023,10 @@ export function CityApp({
                   <header className="thread-reader-head">
                     <h2>{selectedThread.topic}</h2>
                     <p className="muted tiny">
-                      {selectedThread.starterName} ↔ {selectedThread.otherName}
+                      {selectedThread.mode === "group" &&
+                      selectedThread.participantNames?.length
+                        ? `Group · ${selectedThread.participantNames.join(", ")}`
+                        : `${selectedThread.starterName} ↔ ${selectedThread.otherName}`}
                       {" · "}
                       {selectedThread.status === "open" ? "live" : "closed"}
                       {" · "}

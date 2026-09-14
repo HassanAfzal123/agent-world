@@ -14,6 +14,7 @@ export type AgentDecision = {
   action: ActionName | "continue";
   target_place?: string | null;
   target_agent?: string | null;
+  target_agents?: string[] | null;
   utterance?: string | null;
   thought?: string | null;
   item?: string | null;

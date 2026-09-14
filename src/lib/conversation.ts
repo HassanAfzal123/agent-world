@@ -11,6 +11,8 @@ export type ConversationThread = {
   max_turns: number;
   turn_count: number;
   waiting_on: string | null;
+  participant_ids?: string[] | null;
+  mode?: "dyad" | "group" | string | null;
   created_at: string;
   updated_at: string;
 };

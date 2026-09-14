@@ -208,7 +208,7 @@ export function pickFreshTip(
 
 /** Soft daily caps — keep learning slow for long stays + token thrift. */
 export const MAX_SKILLS_PER_DAY = 2;
-export const MAX_LESSONS_PER_DAY = 3;
+export const MAX_LESSONS_PER_DAY = 8;
 /** Min ms between LLM calls for one agent (fallback fills the gaps). */
 export const LLM_COOLDOWN_MS = (() => {
   const raw = process.env.LLM_COOLDOWN_MS;
