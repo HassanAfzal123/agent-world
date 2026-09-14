@@ -1381,26 +1381,39 @@ def _maybe_force_prep_compose(
     # Filing support: talk about the report / invite group at library.
     if phase == "filing" and champ_id and not is_champ and str(you.get("place_id") or "") == "library":
         if action in ("idle", "reflect", "work", "rest") or not in_group:
-            peer = champ_id if champ_id != you_id else _resolve_peer(observe)
-            invitees = [
-                str(n.get("id"))
+            nearby_here = [
+                n
                 for n in (observe.get("nearby") or [])
-                if isinstance(n, dict)
-                and str(n.get("id") or "") not in (you_id, peer or "")
-            ][:2]
-            if peer and invitees and not in_group:
-                return {
-                    "action": "invite_to_group",
-                    "target_agent": peer,
-                    "target_agents": invitees,
-                    "target_place": "library",
-                    "item": None,
-                    "utterance": (
-                        f'Let\'s group up to finish the DETAILED filing report for "{cycle.get("winning_title") or "the winner"}" '
-                        "— problem, design, roles, pitch — then the champion files."
-                    )[:4000],
-                    "thought": "Forming a filing group to co-write the detailed report.",
-                }
+                if isinstance(n, dict) and str(n.get("id") or "") not in ("", you_id)
+            ]
+            # Prefer champion if they are here; else any two locals.
+            champ_here = next(
+                (n for n in nearby_here if str(n.get("id")) == champ_id),
+                None,
+            )
+            if len(nearby_here) >= 2 and not in_group:
+                peer = str((champ_here or nearby_here[0]).get("id"))
+                invitees = [
+                    str(n.get("id"))
+                    for n in nearby_here
+                    if str(n.get("id") or "") not in ("", you_id, peer)
+                ][:2]
+                if peer and invitees:
+                    return {
+                        "action": "invite_to_group",
+                        "target_agent": peer,
+                        "target_agents": invitees,
+                        "target_place": "library",
+                        "item": None,
+                        "utterance": (
+                            f'Let\'s group up to finish the DETAILED filing report for "{cycle.get("winning_title") or "the winner"}" '
+                            "— problem, design, roles, pitch — then the champion files."
+                        )[:4000],
+                        "thought": "Forming a filing group to co-write the detailed report.",
+                    }
+            peer = champ_id if champ_here else (
+                str(nearby_here[0].get("id")) if nearby_here else None
+            )
             if peer:
                 return {
                     "action": "talk",
@@ -1422,14 +1435,16 @@ def _maybe_force_prep_compose(
         return decision
 
     if not in_group or group_size < 3:
-        peer = _resolve_peer(observe)
-        invitees = [
-            str(n.get("id"))
+        # Only invite agents who are HERE — remote thread partners make the
+        # server too_far→walk and never open a group.
+        nearby_here = [
+            n
             for n in (observe.get("nearby") or [])
-            if isinstance(n, dict)
-            and str(n.get("id") or "") not in (you_id, peer or "")
-        ][:2]
-        if peer and invitees:
+            if isinstance(n, dict) and str(n.get("id") or "") not in ("", you_id)
+        ]
+        if len(nearby_here) >= 2:
+            peer = str(nearby_here[0].get("id"))
+            invitees = [str(n.get("id")) for n in nearby_here[1:3] if n.get("id")]
             return {
                 "action": "invite_to_group",
                 "target_agent": peer,
@@ -1442,7 +1457,8 @@ def _maybe_force_prep_compose(
                 )[:4000],
                 "thought": "Forced process: open a tool group before nominating.",
             }
-        if peer:
+        if len(nearby_here) == 1:
+            peer = str(nearby_here[0].get("id"))
             return {
                 "action": "talk",
                 "target_agent": peer,

@@ -750,14 +750,28 @@ export async function applyExternalDecision(
     return { ok: true, result: filed };
   }
 
-  // Physics RPC has no invite_to_group yet — treat as talk for status/energy.
-  const rpcAction = action === "invite_to_group" ? "talk" : action;
+  // Physics RPC has no invite_to_group yet — map to talk/idle for status/energy.
+  // Critical: never use a remote (thread) peer as the talk target, or too_far
+  // converts the invite into a walk and the group never opens.
+  const samePlacePeers = peers.filter(
+    (p) =>
+      Boolean(agent.place_id) &&
+      p.place_id === agent.place_id &&
+      p.id !== agent.id,
+  );
+  let physicsTarget = decision.target_agent || null;
+  let rpcAction = action;
+  if (action === "invite_to_group") {
+    const namedHere = samePlacePeers.find((p) => p.id === decision.target_agent);
+    physicsTarget = namedHere?.id || samePlacePeers[0]?.id || null;
+    rpcAction = physicsTarget ? "talk" : "idle";
+  }
 
   let { data, error } = await db.rpc("apply_agent_action", {
     p_agent_id: agent.id,
     p_action: rpcAction,
-    p_target_place: decision.target_place,
-    p_target_agent: decision.target_agent,
+    p_target_place: action === "invite_to_group" ? null : decision.target_place,
+    p_target_agent: physicsTarget,
     p_utterance: decision.utterance,
     p_thought: decision.thought,
     p_item: decision.item,
@@ -771,7 +785,23 @@ export async function applyExternalDecision(
     typeof data === "object" &&
     (data as { error?: string }).error === "too_far";
 
-  if (tooFar && decision.target_agent) {
+  if (tooFar && action === "invite_to_group") {
+    // Stay put and keep invite intent — walking away is what killed :48 groups.
+    const retry = await db.rpc("apply_agent_action", {
+      p_agent_id: agent.id,
+      p_action: "idle",
+      p_target_place: null,
+      p_target_agent: null,
+      p_utterance: null,
+      p_thought:
+        decision.thought || "Staying put to form a tool group with nearby peers.",
+      p_item: null,
+      p_plan: null,
+    });
+    finalData = retry.data;
+    error = retry.error;
+    finalAction = "invite_to_group";
+  } else if (tooFar && decision.target_agent) {
     const other = peers.find((a) => a.id === decision.target_agent);
     const dest = pickMeetupPlace({
       agents: [agent, ...peers],
@@ -839,29 +869,28 @@ export async function applyExternalDecision(
       )
     : [];
   // Groups only via invite_to_group — never because people share a place.
+  // Participants must be at the same place now (remote thread partners caused
+  // too_far walks and zero groups during the :48 cycle).
   const wantGroup = finalAction === "invite_to_group";
+  const samePlaceIds = new Set(samePlacePeers.map((p) => p.id));
   let groupPeerIds: string[] = [];
   if (wantGroup) {
-    const fromThread =
-      activeThread?.status === "open" && activeThread.mode !== "group"
-        ? [activeThread.starter_id, activeThread.other_id].filter(
-            (id): id is string =>
-              Boolean(id) && id !== agent.id && peers.some((p) => p.id === id),
-          )
-        : activeThread?.status === "open" &&
-            activeThread.mode === "group" &&
-            Array.isArray(activeThread.participant_ids)
-          ? activeThread.participant_ids.filter(
-              (id) => id !== agent.id && peers.some((p) => p.id === id),
-            )
-          : [];
     groupPeerIds = Array.from(
       new Set(
-        [...fromThread, socialPeer, ...explicitInvitees].filter(
-          (id): id is string => Boolean(id) && id !== agent.id,
+        [...explicitInvitees, socialPeer].filter(
+          (id): id is string =>
+            Boolean(id) && id !== agent.id && samePlaceIds.has(id),
         ),
       ),
     );
+    // Fill to ≥2 from agents here when the invite named fewer local peers.
+    if (groupPeerIds.length < 2) {
+      for (const p of samePlacePeers) {
+        if (!groupPeerIds.includes(p.id)) groupPeerIds.push(p.id);
+        if (groupPeerIds.length >= 2) break;
+      }
+    }
+    groupPeerIds = groupPeerIds.slice(0, 4);
   }
   let momentThreadId: string | null = activeThread?.id || null;
 
@@ -919,107 +948,103 @@ export async function applyExternalDecision(
         ? String((lastMsgs[0] as { body?: string }).body || "")
         : null;
 
-    if (!isRepeatThreadLine(speechBody, lastBody)) {
-      const topicRaw = topicLabelFromSpeech(
-        speechBody,
-        decision.item || agent.pending_answer_topic,
-      );
+    const topicRaw = topicLabelFromSpeech(
+      speechBody,
+      decision.item || agent.pending_answer_topic,
+    );
 
-      // Rare intentional group: invite named peers + optional meetup.
-      if (wantGroup && groupPeerIds.length >= 2) {
-        const meetPlace =
-          (decision.target_place &&
-          places.some((p) => p.id === decision.target_place)
-            ? decision.target_place
-            : null) ||
-          agent.place_id ||
-          pickMeetupPlace({
-            agents: [agent, ...peers],
-            places,
-            prefer: agent.place_id,
-            avoid: null,
-            selfHaunt: agent.haunt_place_id,
-            salt: `group:${agent.name}:${topicRaw}`,
-          });
-        const meetHour = (hour + 1) % 24;
-        for (const pid of groupPeerIds) {
-          const peer = peers.find((p) => p.id === pid);
-          if (!peer) continue;
-          if (peer.place_id !== meetPlace) {
-            await db.rpc("set_appointment", {
-              p_agent_id: peer.id,
-              p_with: agent.id,
-              p_place: meetPlace,
-              p_hour: meetHour,
-              p_note: `Group invite: ${topicRaw.slice(0, 80)}`,
-            });
-          }
-        }
-        if (agent.place_id !== meetPlace && meetPlace) {
-          await db.rpc("set_appointment", {
-            p_agent_id: agent.id,
-            p_with: groupPeerIds[0],
-            p_place: meetPlace,
-            p_hour: meetHour,
-            p_note: `Host group: ${topicRaw.slice(0, 80)}`,
-          });
-        }
-        const { data: opened } = await db.rpc("open_group_conversation", {
+    // Group open must not be blocked by repeat-line gate (forced invite text is stable).
+    if (wantGroup) {
+      if (groupPeerIds.length < 2) {
+        return {
+          ok: false,
+          error: "need_two_nearby_peers",
+          status: 400,
+        };
+      }
+      const meetPlace =
+        (decision.target_place &&
+        places.some((p) => p.id === decision.target_place)
+          ? decision.target_place
+          : null) ||
+        agent.place_id ||
+        pickMeetupPlace({
+          agents: [agent, ...peers],
+          places,
+          prefer: agent.place_id,
+          avoid: null,
+          selfHaunt: agent.haunt_place_id,
+          salt: `group:${agent.name}:${topicRaw}`,
+        });
+      // Prefer meeting where we already are — appointments for next hour pulled
+      // agents off plaza during the meeting window.
+      const gatherHere = agent.place_id || meetPlace;
+      const { data: opened, error: groupErr } = await db.rpc(
+        "open_group_conversation",
+        {
           p_starter: agent.id,
           p_participants: groupPeerIds,
           p_topic: topicRaw,
           p_body: speechBody,
-          p_place: meetPlace || agent.place_id,
+          p_place: gatherHere,
           p_max_turns: 36,
+        },
+      );
+      if (groupErr) {
+        return { ok: false, error: groupErr.message, status: 400 };
+      }
+      if (!opened) {
+        return { ok: false, error: "group_open_failed", status: 400 };
+      }
+      activeThread = opened as ConversationThread;
+      momentThreadId = activeThread.id;
+      await db
+        .from("agents")
+        .update({ last_action: "invite_to_group" })
+        .eq("id", agent.id);
+    } else if (!isRepeatThreadLine(speechBody, lastBody)) {
+      const inOpenThread =
+        isThreadParticipant(activeThread) &&
+        (activeThread!.mode === "group" ||
+          (socialPeer &&
+            (socialPeer === activeThread!.starter_id ||
+              socialPeer === activeThread!.other_id ||
+              (Array.isArray(activeThread!.participant_ids) &&
+                activeThread!.participant_ids.includes(socialPeer)))));
+
+      if (inOpenThread && activeThread) {
+        const kind =
+          finalAction === "ask_question"
+            ? "ask"
+            : finalAction === "share_experience" || finalAction === "teach"
+              ? "share"
+              : "reply";
+        const { data: replied } = await db.rpc("reply_conversation", {
+          p_thread: activeThread.id,
+          p_agent: agent.id,
+          p_body: speechBody,
+          p_kind: kind,
+        });
+        if (replied) {
+          activeThread = replied as ConversationThread;
+          momentThreadId = activeThread.id;
+        }
+      } else if (
+        socialPeer &&
+        !/^(hey|hi|hello)\b/i.test(speechBody) &&
+        !/\bhow are you\b/i.test(speechBody)
+      ) {
+        const { data: opened } = await db.rpc("open_conversation", {
+          p_starter: agent.id,
+          p_other: socialPeer,
+          p_topic: topicRaw,
+          p_body: speechBody,
+          p_place: agent.place_id,
+          p_max_turns: 32,
         });
         if (opened) {
           activeThread = opened as ConversationThread;
           momentThreadId = activeThread.id;
-        }
-      } else {
-        const inOpenThread =
-          isThreadParticipant(activeThread) &&
-          (activeThread!.mode === "group" ||
-            (socialPeer &&
-              (socialPeer === activeThread!.starter_id ||
-                socialPeer === activeThread!.other_id ||
-                (Array.isArray(activeThread!.participant_ids) &&
-                  activeThread!.participant_ids.includes(socialPeer)))));
-
-        if (inOpenThread && activeThread) {
-          const kind =
-            finalAction === "ask_question"
-              ? "ask"
-              : finalAction === "share_experience" || finalAction === "teach"
-                ? "share"
-                : "reply";
-          const { data: replied } = await db.rpc("reply_conversation", {
-            p_thread: activeThread.id,
-            p_agent: agent.id,
-            p_body: speechBody,
-            p_kind: kind,
-          });
-          if (replied) {
-            activeThread = replied as ConversationThread;
-            momentThreadId = activeThread.id;
-          }
-        } else if (
-          socialPeer &&
-          !/^(hey|hi|hello)\b/i.test(speechBody) &&
-          !/\bhow are you\b/i.test(speechBody)
-        ) {
-          const { data: opened } = await db.rpc("open_conversation", {
-            p_starter: agent.id,
-            p_other: socialPeer,
-            p_topic: topicRaw,
-            p_body: speechBody,
-            p_place: agent.place_id,
-            p_max_turns: 32,
-          });
-          if (opened) {
-            activeThread = opened as ConversationThread;
-            momentThreadId = activeThread.id;
-          }
         }
       }
     }
