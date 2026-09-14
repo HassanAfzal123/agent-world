@@ -326,10 +326,14 @@ export async function buildObserve(
   if (phase === "collaborate") {
     priorities.unshift(
       `PREPARE FOR THE HOURLY TOOL MEETING — ${minsToMeeting} minute(s) left until plaza meeting (UTC :45). ` +
-        "This is REQUIRED town work, not optional chat. Before the meeting you should: (1) talk with peers about a TOOL the town needs, " +
-        "(2) invite_to_group if the idea needs more minds, (3) compose_proposal with a real structured draft, (4) nominate_idea so your idea is on the ballot. " +
-        "Hot-topic banter alone is not enough — bring a concrete tool nomination.",
+        "PROCESS is required; IDEAS are yours. Before the meeting: talk about a TOOL, optionally invite_to_group, compose_proposal, nominate_idea. " +
+        "You decide the topic, who writes which section, and (later) who files.",
     );
+    if (minsToMeeting <= 10) {
+      priorities.unshift(
+        "FORCED PROCESS WINDOW (last 10 min): Be at the plaza preparing nominations. Idle sightseeing is not allowed by process — walk to plaza, discuss tools, compose/nominate. Content of ideas remains your choice.",
+      );
+    }
     priorities.unshift(
       "PHASE collaborate: Discuss town pains and tools. If a 1:1 idea should become a winning product, use invite_to_group to pull in others and draft together. " +
         "Write the document with compose_proposal. When ready, nominate_idea (item=title, utterance=summary). Do NOT file yet.",
@@ -341,21 +345,21 @@ export async function buildObserve(
     }
     if (!hasDraft && minsToMeeting <= 20) {
       priorities.unshift(
-        "URGENT: You still have no proposal draft and the meeting is soon. Prefer talk/ask about a buildable town tool, then compose_proposal this beat or next.",
+        "URGENT process: You still have no proposal draft and the meeting is soon. Prefer talk/ask about a buildable town tool, then compose_proposal — YOU pick which tool.",
       );
     }
     if (!noms.length && minsToMeeting <= 25) {
       priorities.push(
-        "No nominations on the ballot yet this hour — your town needs at least one nominate_idea before voting or the cycle closes empty.",
+        "No nominations on the ballot yet this hour — someone must nominate_idea before voting or the cycle closes empty.",
       );
     }
   } else if (phase === "meeting") {
     priorities.unshift(
-      `PHASE meeting: Walk to ${cycle.meeting_place || "plaza"} NOW. Report your nomination; listen to others. Use nominate_idea if you still lack one. Voting starts soon.`,
+      `PHASE meeting (forced gather at ${cycle.meeting_place || "plaza"}): Report nominations. YOU invent ideas. Use nominate_idea if needed. Discuss who should write/file later via appoint_filer (target_agent=filer uuid).`,
     );
   } else if (phase === "voting") {
     priorities.unshift(
-      `PHASE voting: At ${cycle.meeting_place || "plaza"}, cast vote_idea. Set item=<nomination uuid> from proposal_cycle.nominations (pick the idea you want as this hour's winner). One vote per agent.`,
+      `PHASE voting: At ${cycle.meeting_place || "plaza"}, cast vote_idea (item=<nomination uuid>). YOU choose what wins. Optionally appoint_filer (target_agent=who submits).`,
     );
     if (noms.length) {
       priorities.push(
@@ -365,12 +369,12 @@ export async function buildObserve(
   } else if (phase === "filing") {
     if (cycle.champion_id && agent.id === cycle.champion_id) {
       priorities.unshift(
-        `PHASE filing — YOU are champion (${cycle.champion_name || "you"}). Walk to library and file_proposal for winning idea "${cycle.winning_title || "the vote winner"}". ` +
-          "Use your draft / winning summary as the full document. This sends it to human Admin.",
+        `PHASE filing — YOU are the appointed/nominator champion (${cycle.champion_name || "you"}). Walk to library and file_proposal for "${cycle.winning_title || "the vote winner"}". ` +
+          "Server only enforces that someone files; the town chose the idea and the filer.",
       );
     } else {
       priorities.unshift(
-        `PHASE filing: Champion is ${cycle.champion_name || "being selected"}. Others: support them verbally; do NOT file. Winner: "${cycle.winning_title || "(resolving)"}".`,
+        `PHASE filing: Filer is ${cycle.champion_name || "being chosen (nominator default, or appoint_filer)"}. Others support; only the filer file_proposal. Winner: "${cycle.winning_title || "(resolving)"}".`,
       );
     }
   } else if (phase === "closed") {
@@ -515,11 +519,13 @@ export async function buildObserve(
       nominate_idea:
         "During collaborate/meeting: put your idea on this hour's ballot. item=title, utterance=summary (>=80 chars). Uses saved draft if needed.",
       vote_idea:
-        "During meeting/voting: item=<nomination uuid> from proposal_cycle.nominations. One vote per agent per hour.",
+        "During meeting/voting: item=<nomination uuid> from proposal_cycle.nominations. YOU choose the winner.",
+      appoint_filer:
+        "During meeting/voting/filing: target_agent=<uuid of who should submit>. Agents decide the filer; server does not pick at random.",
       invite_to_group:
         "During collaborate: when a 1:1 tool idea should be explored as a possible winning product, invite another peer (target_agents) and draft together. Rare otherwise — never auto-group everyone nearby.",
       file_proposal:
-        "Only in filing phase, and only if you are this hour's random champion: at library, file the winning document to Admin.",
+        "Only in filing phase, and only if you are the appointed/nominator filer: at library, file the winning document to Admin.",
       ranges: `talk_range=${TALK_RANGE} tiles; sight_range=${SIGHT_RANGE} tiles.`,
     },
   };
@@ -644,6 +650,23 @@ export async function applyExternalDecision(
       return { ok: false, error: row?.error || "vote_failed", status: 400 };
     }
     return { ok: true, result: voted };
+  }
+
+  if (action === "appoint_filer") {
+    const filer = decision.target_agent;
+    if (!filer || filer.length < 8) {
+      return { ok: false, error: "appoint_filer_requires_target_agent", status: 400 };
+    }
+    const { data: appt, error: apptErr } = await db.rpc("appoint_proposal_filer", {
+      p_agent: agent.id,
+      p_filer: filer,
+    });
+    if (apptErr) return { ok: false, error: apptErr.message, status: 400 };
+    const row = appt as { ok?: boolean; error?: string } | null;
+    if (!row || row.ok === false) {
+      return { ok: false, error: row?.error || "appoint_failed", status: 400 };
+    }
+    return { ok: true, result: appt };
   }
 
   // file_proposal: library shelf drop — bypass physics RPC.

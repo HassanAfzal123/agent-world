@@ -27,6 +27,7 @@ import {
   forceEventGatherDecision,
   forceProposalFilingDecision,
   forceProposalMeetingDecision,
+  forceProposalPrepDecision,
   hauntWalkDecision,
   needsOpenMindSpeech,
   topicFromUtterance,
@@ -222,11 +223,13 @@ export async function POST(req: Request) {
             phase?: string;
             meeting_place?: string;
             champion_id?: string | null;
+            utc_minute?: number;
           })
         : {};
     const cyclePhase = String(proposalCycle.phase || "");
     const cyclePlace = String(proposalCycle.meeting_place || "plaza");
     const cycleChamp = proposalCycle.champion_id || null;
+    const cycleMinute = Number(proposalCycle.utc_minute ?? 0);
 
     // Persist procedural looks for any agent missing one (spawn + legacy)
     for (const a of allLlm) {
@@ -360,8 +363,21 @@ export async function POST(req: Request) {
           forcedAnswer || forcedAppt || forcedCouncil
             ? null
             : forceEventGatherDecision(agent, allLlm, eventName, eventPlace);
-        const forcedProposalMeet =
+        const forcedProposalPrep =
           forcedAnswer || forcedAppt || forcedCouncil || forcedAmbient
+            ? null
+            : forceProposalPrepDecision(
+                agent,
+                cyclePhase,
+                cycleMinute,
+                cyclePlace,
+              );
+        const forcedProposalMeet =
+          forcedAnswer ||
+          forcedAppt ||
+          forcedCouncil ||
+          forcedAmbient ||
+          forcedProposalPrep
             ? null
             : forceProposalMeetingDecision(agent, cyclePhase, cyclePlace);
         const forcedProposalFile =
@@ -369,6 +385,7 @@ export async function POST(req: Request) {
           forcedAppt ||
           forcedCouncil ||
           forcedAmbient ||
+          forcedProposalPrep ||
           forcedProposalMeet
             ? null
             : forceProposalFilingDecision(agent, cyclePhase, cycleChamp);
@@ -377,6 +394,7 @@ export async function POST(req: Request) {
           forcedAppt ||
           forcedCouncil ||
           forcedAmbient ||
+          forcedProposalPrep ||
           forcedProposalMeet ||
           forcedProposalFile;
         const budgetExhausted = llmCallsThisTick >= MAX_LLM_PER_TICK;

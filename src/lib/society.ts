@@ -247,6 +247,35 @@ export function forceEventGatherDecision(
   };
 }
 
+/** Late collaborate (last 10 min before :45): force walk to plaza for pre-meeting prep. */
+export function forceProposalPrepDecision(
+  agent: Agent,
+  phase: string | null | undefined,
+  utcMinute: number | null | undefined,
+  meetingPlace: string | null | undefined,
+): AgentDecision | null {
+  if (phase !== "collaborate") return null;
+  const m = Number(utcMinute ?? 0);
+  if (m < 35) return null; // only last ~10 minutes before meeting
+  const place = meetingPlace || "plaza";
+  if (agent.place_id === place) return null;
+  if (agent.pending_answer_to) return null;
+  if (
+    agent.status === "walking" &&
+    agent.target_place_id === place
+  ) {
+    return null;
+  }
+  return {
+    action: "walk",
+    target_place: place,
+    thought:
+      "Forced process: pre-meeting tool prep — walk to the plaza to bring nominations (ideas are still ours).",
+    utterance: null,
+    item: null,
+  };
+}
+
 /** Hourly winning-product meeting / voting: pull free agents to plaza. */
 export function forceProposalMeetingDecision(
   agent: Agent,
@@ -265,11 +294,11 @@ export function forceProposalMeetingDecision(
   ) {
     return null;
   }
-  if (agent.status === "talking" && phase === "meeting") return null;
+  // Meeting/voting: pull even if talking — process overrides chitchat elsewhere.
   return {
     action: "walk",
     target_place: place,
-    thought: `Hourly tool ${phase} — heading to ${place}.`,
+    thought: `Forced process: hourly tool ${phase} at ${place}. Decisions (ideas/votes) stay yours.`,
     utterance: null,
     item: null,
   };

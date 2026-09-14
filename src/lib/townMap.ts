@@ -136,6 +136,7 @@ export const ACTIONS = [
   "compose_proposal",
   "nominate_idea",
   "vote_idea",
+  "appoint_filer",
   "file_proposal",
   "accept",
   "refuse",

@@ -74,6 +74,7 @@ ALLOWED_ACTIONS = {
     "compose_proposal",
     "nominate_idea",
     "vote_idea",
+    "appoint_filer",
     "file_proposal",
 }
 
@@ -728,6 +729,38 @@ def _sanitize_decision(
             agent_name, observe, f"Unknown action {action}.", system, fps
         )
 
+    # Forced process: last 10 minutes before meeting — get to plaza (ideas still free).
+    cycle_early = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
+    phase_early = str(cycle_early.get("phase") or "")
+    utc_early = int(cycle_early.get("utc_minute") or 0)
+    you_early = observe.get("you") if isinstance(observe.get("you"), dict) else {}
+    if (
+        phase_early == "collaborate"
+        and utc_early >= 35
+        and str(you_early.get("place_id") or "") != "plaza"
+        and action not in ("walk", "nominate_idea", "compose_proposal", "invite_to_group")
+    ):
+        return {
+            "action": "walk",
+            "target_place": "plaza",
+            "target_agent": None,
+            "item": None,
+            "utterance": None,
+            "thought": "Forced process: pre-meeting prep at plaza (we still invent the tools ourselves).",
+        }
+    if phase_early in ("meeting", "voting") and str(you_early.get("place_id") or "") != str(
+        cycle_early.get("meeting_place") or "plaza"
+    ):
+        if action != "walk":
+            return {
+                "action": "walk",
+                "target_place": str(cycle_early.get("meeting_place") or "plaza"),
+                "target_agent": None,
+                "item": None,
+                "utterance": None,
+                "thought": f"Forced process: go to {cycle_early.get('meeting_place') or 'plaza'} for {phase_early}.",
+            }
+
     utterance = decision.get("utterance")
     if isinstance(utterance, str):
         utterance = utterance.strip()[:4000] or None
@@ -899,6 +932,30 @@ def _sanitize_decision(
             "item": nom,
             "utterance": utterance,
             "thought": decision.get("thought") or "Casting my vote for this hour's winner.",
+        }
+
+    if action == "appoint_filer":
+        filer = _resolve_peer(observe, decision.get("target_agent"))
+        if not filer:
+            # Allow any claimed peer id from nominations / cycle if nearby resolve fails
+            raw = str(decision.get("target_agent") or "").strip()
+            filer = raw if len(raw) > 8 else None
+        if not filer:
+            return _solo_decision(
+                agent_name,
+                observe,
+                "appoint_filer needs target_agent=uuid of who should submit.",
+                system,
+                fps,
+            )
+        return {
+            "action": "appoint_filer",
+            "target_place": None,
+            "target_agent": filer,
+            "item": None,
+            "utterance": utterance,
+            "thought": decision.get("thought")
+            or "Appointing who will file the winning summary.",
         }
 
     if action == "file_proposal":
@@ -1466,14 +1523,19 @@ def decide_act(
         if phase == "collaborate":
             priorities.insert(
                 0,
-                f"REQUIRED PREP — tool meeting in {mins_to_meeting} min (plaza at UTC :45). "
-                "Stop pure chitchat. Talk about a TOOL to build, compose_proposal, nominate_idea before the meeting. "
+                f"REQUIRED PROCESS — tool meeting in {mins_to_meeting} min (plaza at UTC :45). "
+                "Ideas/topics/roles are YOURS. Process: gather, compose_proposal, nominate_idea. "
                 "Empty ballot = wasted hour.",
             )
+            if mins_to_meeting <= 10:
+                priorities.insert(
+                    0,
+                    "FORCED last-10-min prep: walk to plaza if elsewhere; discuss tools; nominate. Do not idle sightseeing.",
+                )
             if not observe.get("my_proposal_draft") and mins_to_meeting <= 20:
                 priorities.insert(
                     0,
-                    "URGENT: no draft yet — this beat prefer talk about a town tool then compose_proposal.",
+                    "URGENT process: no draft yet — talk about a town tool then compose_proposal (you pick the tool).",
                 )
         if phase == "meeting" or phase == "voting":
             place = str(cycle.get("meeting_place") or "plaza")
