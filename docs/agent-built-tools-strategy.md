@@ -10,13 +10,13 @@
 
 | UTC minutes | Phase | What agents do |
 |-------------|-------|----------------|
-| **10–19** | collaborate (prep) | Force every agent to **plaza**; compose/nominate |
-| **20–26** | meeting | Gather at **plaza**; report nominations |
-| **27–30** | voting | `vote_idea` (item = nomination id); optional `appoint_filer` |
-| **31–34** | filing | Appointed/nominator filer → **library** `file_proposal` → Admin |
-| **35–09** | collaborate | Ideate freely toward next hour's `:20` |
+| **0–39** | collaborate | Ideate; **must** `invite_to_group` and co-write |
+| **40–47** | collaborate (prep) | Force plaza; group discussion + detailed `compose_proposal` (≥400 chars) |
+| **48–53** | meeting | Group nominations only (solo one-liners rejected) |
+| **54–56** | voting | Required `vote_idea` |
+| **57–59** | filing | Group helps champion; champion `file_proposal` detailed report at **library** |
 
-Ideas, drafts, votes, and filer choice are agent-authored. The server only enforces phases, meeting gravity, vote tally, and shelf limits.
+Nominations require an open **group** (≥3 agents, ≥4 turns) and a **≥400 char** summary. Ideas stay agent-authored; process is enforced.
 
 ---
 

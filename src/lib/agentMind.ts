@@ -324,34 +324,33 @@ export async function buildObserve(
   );
   const noms = Array.isArray(cycle.nominations) ? cycle.nominations : [];
   const utcMin = Number(cycle.utc_minute ?? 0);
-  // Meeting at UTC :20; during collaborate after :35, count to next hour's :20.
+  // Meeting at UTC :48; count down during collaborate.
   const minsToMeeting =
     phase === "collaborate"
-      ? utcMin < 20
-        ? Math.max(0, 20 - utcMin)
-        : Math.max(0, 60 - utcMin + 20)
+      ? utcMin < 48
+        ? Math.max(0, 48 - utcMin)
+        : Math.max(0, 60 - utcMin + 48)
       : 0;
 
   // HARD PROCEDURE (ideas open; structure fixed) — hourly winning product cycle.
   priorities.unshift(
     `HOURLY WINNING-PRODUCT CYCLE (UTC hour ${cycle.hour_key || "?"}, phase=${phase}, minute=${utcMin}): ` +
-      "Procedure is fixed; IDEA CONTENT is yours. Meeting at UTC :20 each hour → vote → filer at library.",
+      "Procedure fixed; IDEA CONTENT yours. Must GROUP (invite_to_group), co-write a DETAILED draft (≥400 chars), nominate as a group, vote, then group-help the filer submit a detailed report at library. Meeting at UTC :48.",
   );
 
   if (phase === "collaborate") {
     priorities.unshift(
-      `PREPARE FOR THE HOURLY TOOL MEETING — ${minsToMeeting} minute(s) left until plaza meeting (UTC :20). ` +
-        "PROCESS is required; IDEAS are yours. Before the meeting: talk about a TOOL, optionally invite_to_group, compose_proposal, nominate_idea. " +
-        "You decide the topic, who writes which section, and (later) who files.",
+      `PREPARE FOR :48 MEETING — ${minsToMeeting} min left. Do NOT solo-spam one-line nominations. ` +
+        "1) discuss a town tool pain, 2) invite_to_group (≥3 agents), 3) co-write compose_proposal with sections (problem/design/roles/risks/success), 4) nominate only after group turns. Ideas are yours; process is required.",
     );
     if (minsToMeeting <= 10) {
       priorities.unshift(
-        "FORCED PROCESS WINDOW (last 10 min before :20): Be at the plaza preparing nominations. Idle sightseeing is not allowed by process — walk to plaza, discuss tools, compose/nominate. Content of ideas remains your choice.",
+        "FORCED PREP (:40-:47): Be at plaza. Open/join a tool GROUP. Expand the draft together. Empty/solo ballot wastes the hour.",
       );
     }
     priorities.unshift(
-      "PHASE collaborate: Discuss town pains and tools. If a 1:1 idea should become a winning product, use invite_to_group to pull in others and draft together. " +
-        "Write the document with compose_proposal. When ready, nominate_idea (item=title, utterance=summary). Do NOT file yet.",
+      "PHASE collaborate: Tool ideas need a GROUP. Use invite_to_group. Co-write compose_proposal (≥400 chars, multi-section). " +
+        "nominate_idea only after group discussion — solo one-liners are rejected by the town process.",
     );
     if (nearby.length >= 1 && Number(thread?.turn_count || 0) >= 2) {
       priorities.push(
@@ -370,11 +369,11 @@ export async function buildObserve(
     }
   } else if (phase === "meeting") {
     priorities.unshift(
-      `PHASE meeting (forced gather at ${cycle.meeting_place || "plaza"}): Report nominations. YOU invent ideas. Use nominate_idea if needed. Discuss who should write/file later via appoint_filer (target_agent=filer uuid).`,
+      `PHASE meeting (gather at ${cycle.meeting_place || "plaza"}): Report GROUP nominations only. If you lack a group draft, invite_to_group and finish a detailed document before nominate_idea.`,
     );
   } else if (phase === "voting") {
     priorities.unshift(
-      `PHASE voting: At ${cycle.meeting_place || "plaza"}, cast vote_idea (item=<nomination uuid>). YOU choose what wins. Optionally appoint_filer (target_agent=who submits).`,
+      `PHASE voting: REQUIRED cast vote_idea (item=<nomination uuid>). Then discuss who files via appoint_filer. After the winner lands, help shape the DETAILED filing report.`,
     );
     if (noms.length) {
       priorities.push(
@@ -384,12 +383,11 @@ export async function buildObserve(
   } else if (phase === "filing") {
     if (cycle.champion_id && agent.id === cycle.champion_id) {
       priorities.unshift(
-        `PHASE filing — YOU are the appointed/nominator champion (${cycle.champion_name || "you"}). Walk to library and file_proposal for "${cycle.winning_title || "the vote winner"}". ` +
-          "Server only enforces that someone files; the town chose the idea and the filer.",
+        `PHASE filing — YOU are champion (${cycle.champion_name || "you"}). REQUIRED: walk to library and file_proposal with a DETAILED report for "${cycle.winning_title || "the winner"}" (≥400 chars: problem, design, roles, pitch). Invite peers into a group at the library to co-write if needed.`,
       );
     } else {
       priorities.unshift(
-        `PHASE filing: Filer is ${cycle.champion_name || "being chosen (nominator default, or appoint_filer)"}. Others support; only the filer file_proposal. Winner: "${cycle.winning_title || "(resolving)"}".`,
+        `PHASE filing: Champion is ${cycle.champion_name || "being chosen"}. Go to library, invite_to_group with the champion, help write the DETAILED filing report. Winner: "${cycle.winning_title || "(resolving)"}".`,
       );
     }
   } else if (phase === "closed") {
@@ -485,7 +483,7 @@ export async function buildObserve(
       phase === "collaborate"
         ? (() => {
             const m = Number(cycle.utc_minute ?? 0);
-            return m < 20 ? Math.max(0, 20 - m) : Math.max(0, 60 - m + 20);
+            return m < 48 ? Math.max(0, 48 - m) : Math.max(0, 60 - m + 48);
           })()
         : 0,
     my_proposal_draft: agent.proposal_draft_title

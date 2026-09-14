@@ -27,6 +27,7 @@ import {
   forceEventGatherDecision,
   clampToProposalGather,
   forceProposalFilingDecision,
+  forceProposalFilingSupportDecision,
   forceProposalMeetingDecision,
   forceProposalPrepDecision,
   hauntWalkDecision,
@@ -362,8 +363,21 @@ export async function POST(req: Request) {
           forcedProposalPrep || forcedProposalMeet
             ? null
             : forceProposalFilingDecision(agent, cyclePhase, cycleChamp);
+        const forcedProposalFileSupport =
+          forcedProposalPrep ||
+          forcedProposalMeet ||
+          forcedProposalFile
+            ? null
+            : forceProposalFilingSupportDecision(
+                agent,
+                cyclePhase,
+                cycleChamp,
+              );
         const forcedProposal =
-          forcedProposalPrep || forcedProposalMeet || forcedProposalFile;
+          forcedProposalPrep ||
+          forcedProposalMeet ||
+          forcedProposalFile ||
+          forcedProposalFileSupport;
         // At plaza during gather, answering peers is fine; elsewhere, gather wins.
         const forcedAnswerOk =
           forcedAnswer &&
@@ -616,6 +630,7 @@ export async function POST(req: Request) {
           cyclePhase,
           cycleMinute,
           cyclePlace,
+          cycleChamp,
         );
 
         // Never send generic / recycled asks into the RPC or threads

@@ -254,12 +254,12 @@ export function inProposalPlazaGather(
 ): boolean {
   if (phase === "meeting" || phase === "voting") return true;
   const m = Number(utcMinute ?? 0);
-  // Prep window: :10-:19 before :20 meeting
-  if (phase === "collaborate" && m >= 10 && m < 20) return true;
+  // Prep window: :40-:47 before :48 meeting
+  if (phase === "collaborate" && m >= 40 && m < 48) return true;
   return false;
 }
 
-/** Collaborate :10-:19: every agent walks to plaza for pre-meeting prep. */
+/** Collaborate :40-:47: every agent walks to plaza for pre-meeting prep. */
 export function forceProposalPrepDecision(
   agent: Agent,
   phase: string | null | undefined,
@@ -268,7 +268,7 @@ export function forceProposalPrepDecision(
 ): AgentDecision | null {
   if (phase !== "collaborate") return null;
   const m = Number(utcMinute ?? 0);
-  if (m < 10 || m >= 20) return null;
+  if (m < 40 || m >= 48) return null;
   const place = meetingPlace || "plaza";
   if (agent.place_id === place) return null;
   if (
@@ -281,7 +281,7 @@ export function forceProposalPrepDecision(
     action: "walk",
     target_place: place,
     thought:
-      "Forced process: pre-meeting tool prep — every agent reports to the plaza before the :20 UTC meeting (ideas are still ours).",
+      "Forced process: pre-meeting prep — every agent to plaza before :48 UTC. Form a GROUP, co-write a detailed tool draft (ideas still ours).",
     utterance: null,
     item: null,
   };
@@ -322,7 +322,46 @@ export function clampToProposalGather(
   phase: string | null | undefined,
   utcMinute: number | null | undefined,
   meetingPlace: string | null | undefined,
+  championId?: string | null,
 ): AgentDecision {
+  // Champion must stay on library path during filing.
+  if (
+    phase === "filing" &&
+    championId &&
+    agent.id === championId
+  ) {
+    const leavingLib =
+      decision.action === "walk" &&
+      decision.target_place &&
+      decision.target_place !== "library";
+    if (agent.place_id === "library") {
+      if (leavingLib) {
+        return {
+          action: "idle",
+          target_place: null,
+          target_agent: null,
+          item: null,
+          utterance: null,
+          thought:
+            "Forced process: stay at library — file_proposal with the DETAILED group report now.",
+        };
+      }
+      return decision;
+    }
+    if (!(decision.action === "walk" && decision.target_place === "library")) {
+      return {
+        action: "walk",
+        target_place: "library",
+        target_agent: null,
+        item: null,
+        utterance: null,
+        thought:
+          "Forced process: filing champion reports to library with the detailed winning report.",
+      };
+    }
+    return decision;
+  }
+
   if (!inProposalPlazaGather(phase, utcMinute)) return decision;
   const place = meetingPlace || "plaza";
   const label =
@@ -343,7 +382,7 @@ export function clampToProposalGather(
         target_agent: null,
         item: null,
         utterance: null,
-        thought: `Forced process: stay at ${place} for hourly tool ${label} — do not leave for open stage or other errands.`,
+        thought: `Forced process: stay at ${place} for hourly tool ${label} — invite_to_group, co-write a DETAILED draft, nominate as a group; do not leave.`,
       };
     }
     return decision;
@@ -368,7 +407,7 @@ export function clampToProposalGather(
   };
 }
 
-/** Filing phase: champion walks to library. */
+/** Filing phase: champion walks to library (redirect mid-walk). */
 export function forceProposalFilingDecision(
   agent: Agent,
   phase: string | null | undefined,
@@ -386,7 +425,33 @@ export function forceProposalFilingDecision(
   return {
     action: "walk",
     target_place: "library",
-    thought: "I am this hour's filing champion — walking to the library Proposal Shelf.",
+    thought:
+      "Forced process: I am filing champion — walk to library, then file_proposal with the DETAILED group report.",
+    utterance: null,
+    item: null,
+  };
+}
+
+/** Non-champions during filing: gather at library to help pitch the report. */
+export function forceProposalFilingSupportDecision(
+  agent: Agent,
+  phase: string | null | undefined,
+  championId: string | null | undefined,
+): AgentDecision | null {
+  if (phase !== "filing") return null;
+  if (!championId || agent.id === championId) return null;
+  if (agent.place_id === "library") return null;
+  if (
+    agent.status === "walking" &&
+    agent.target_place_id === "library"
+  ) {
+    return null;
+  }
+  return {
+    action: "walk",
+    target_place: "library",
+    thought:
+      "Forced process: help the champion at the library — group-discuss the DETAILED filing report and pitch.",
     utterance: null,
     item: null,
   };

@@ -729,8 +729,7 @@ def _sanitize_decision(
             agent_name, observe, f"Unknown action {action}.", system, fps
         )
 
-    # Forced process: EVERY agent to plaza for prep (:10-:19) / meeting / voting.
-    # Ideas stay free; location is not. Open stage and other walks lose.
+    # Forced process: plaza prep (:40-:47) / meeting / voting. Filing handled separately.
     cycle_early = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
     phase_early = str(cycle_early.get("phase") or "")
     utc_early = int(cycle_early.get("utc_minute") or 0)
@@ -738,8 +737,45 @@ def _sanitize_decision(
     meet_place = str(cycle_early.get("meeting_place") or "plaza")
     at_meet = str(you_early.get("place_id") or "") == meet_place
     gather = phase_early in ("meeting", "voting") or (
-        phase_early == "collaborate" and 10 <= utc_early < 20
+        phase_early == "collaborate" and 40 <= utc_early < 48
     )
+    champ_id = str(cycle_early.get("champion_id") or "")
+    you_id = str(you_early.get("id") or "")
+    is_champ = bool(champ_id and you_id and champ_id == you_id)
+
+    if phase_early == "filing" and is_champ:
+        if str(you_early.get("place_id") or "") != "library":
+            if not (action == "walk" and str(decision.get("target_place") or "") == "library"):
+                return {
+                    "action": "walk",
+                    "target_place": "library",
+                    "target_agent": None,
+                    "item": None,
+                    "utterance": None,
+                    "thought": "Forced process: filing champion → library to file_proposal with the DETAILED group report.",
+                }
+        elif action == "walk" and str(decision.get("target_place") or "") not in ("", "library"):
+            return {
+                "action": "file_proposal",
+                "target_place": None,
+                "target_agent": None,
+                "item": str(cycle_early.get("winning_title") or decision.get("item") or "Winning tool")[:160],
+                "utterance": None,
+                "thought": "At library — filing the detailed winning report now.",
+                "_expand_file": True,
+            }
+    elif phase_early == "filing" and champ_id and not is_champ:
+        if str(you_early.get("place_id") or "") != "library":
+            if not (action == "walk" and str(decision.get("target_place") or "") == "library"):
+                return {
+                    "action": "walk",
+                    "target_place": "library",
+                    "target_agent": None,
+                    "item": None,
+                    "utterance": None,
+                    "thought": "Forced process: meet the champion at library to co-write the DETAILED filing pitch.",
+                }
+
     if gather:
         walk_target = str(decision.get("target_place") or "").strip()
         if not at_meet:
@@ -761,9 +797,10 @@ def _sanitize_decision(
                 "utterance": None,
                 "thought": (
                     f"At {meet_place} for hourly tool {phase_early if phase_early != 'collaborate' else 'prep'} — "
-                    "compose_proposal (item=title, utterance=full ≥120-char draft) or nominate_idea; do not leave."
+                    "invite_to_group, co-write a DETAILED draft, nominate as a group; do not leave."
                 ),
-                "_force_compose": phase_early == "collaborate",
+                "_force_compose": False,
+                "_force_group": phase_early == "collaborate",
             }
 
     utterance = decision.get("utterance")
@@ -881,14 +918,14 @@ def _sanitize_decision(
     if action == "compose_proposal":
         title = str(decision.get("item") or decision.get("plan") or "").strip()
         draft = (utterance or "").strip()
-        if len(draft) < 120 or len(title) < 8:
+        if len(draft) < 400 or len(title) < 8:
             return {
                 "action": "compose_proposal",
                 "target_place": None,
                 "target_agent": None,
                 "item": (title or "").strip()[:160] or None,
-                "utterance": draft if len(draft) >= 40 else None,
-                "thought": "Need a full proposal document (≥120 chars) for the hourly tool meeting.",
+                "utterance": draft if len(draft) >= 80 else None,
+                "thought": "Need a DETAILED group proposal document (≥400 chars) — not a one-liner.",
                 "_expand_compose": True,
             }
         return {
@@ -1163,22 +1200,23 @@ def _llm_expand_compose(
     seed_title: str | None = None,
     seed_body: str | None = None,
 ) -> dict[str, Any]:
-    """Agent invents a real tool proposal draft (title + ≥120 body). No hardcoded idea."""
+    """Agent invents a detailed tool proposal (≥400 chars). No hardcoded product idea."""
     thread = observe.get("thread") if isinstance(observe.get("thread"), dict) else {}
     topic = str(thread.get("topic") or "")[:160]
+    mode = str(thread.get("mode") or "")
     nearby = [
         str(n.get("name") or "")
         for n in (observe.get("nearby") or [])
         if isinstance(n, dict)
     ][:5]
     prompt = (
-        f"You are {agent_name} in AgentWorld. The hourly tool meeting needs a nomination. "
-        f"Invent ONE buildable town TOOL (your idea — not a slogan). "
-        f"Recent thread topic (fuel only): {topic or '(none)'}. "
-        f"Peers nearby: {nearby or ['(none)']}. "
-        f"Seed title: {seed_title or '(none)'}. Seed notes: {(seed_body or '')[:200] or '(none)'}.\n"
+        f"You are {agent_name} in AgentWorld. Write a DETAILED group-style tool proposal "
+        f"(this will be refined with peers). Invent ONE buildable town TOOL (your idea). "
+        f"Thread mode={mode or 'none'} topic={topic or '(none)'}. Peers: {nearby or ['(none)']}. "
+        f"Seed title: {seed_title or '(none)'}. Seed notes: {(seed_body or '')[:300] or '(none)'}.\n"
         f"Return JSON only: {{\"item\":\"tool title ≥8 chars\","
-        f"\"utterance\":\"proposal document ≥160 chars covering what it does, who it helps, and first build step\","
+        f"\"utterance\":\"DOCUMENT ≥420 chars with sections: Problem, Tool design, Who contributes what, "
+        f"Risks, Success check, First build step\","
         f"\"thought\":\"why this tool\"}}"
     )
     payload = json.dumps(
@@ -1189,7 +1227,7 @@ def _llm_expand_compose(
                     "role": "system",
                     "content": (
                         "Return only valid JSON. Invent a concrete AgentWorld tool. "
-                        "No greetings. No open-stage craft takes. Do not copy the seed verbatim if thin."
+                        "Document must be detailed (≥420 chars). No greetings. No one-liners."
                     ),
                 },
                 {"role": "user", "content": prompt},
@@ -1211,8 +1249,10 @@ def _llm_expand_compose(
         parsed = _extract_json(content) or {}
         title = str(parsed.get("item") or seed_title or "").strip()
         body = str(parsed.get("utterance") or "").strip()
-        thought = str(parsed.get("thought") or "Drafting a tool proposal for the hourly meeting.").strip()
-        if len(title) >= 8 and len(body) >= 120:
+        thought = str(
+            parsed.get("thought") or "Drafting a detailed tool proposal for group review."
+        ).strip()
+        if len(title) >= 8 and len(body) >= 400:
             return {
                 "action": "compose_proposal",
                 "target_place": None,
@@ -1223,19 +1263,36 @@ def _llm_expand_compose(
             }
     except Exception:
         pass
-    # Last resort: still don't invent a canned product — ask peers instead.
     peer = _resolve_peer(observe)
     if peer:
+        invitees = [
+            str(n.get("id"))
+            for n in (observe.get("nearby") or [])
+            if isinstance(n, dict) and str(n.get("id") or "") not in (peer, str((observe.get("you") or {}).get("id") or ""))
+        ][:2]
+        if invitees:
+            return {
+                "action": "invite_to_group",
+                "target_agent": peer,
+                "target_agents": invitees,
+                "target_place": "plaza",
+                "item": None,
+                "utterance": (
+                    "We need a real group for this hour's tool — join us to co-write a detailed proposal "
+                    "(problem, design, roles, risks), not solo one-liners."
+                )[:4000],
+                "thought": "Opening a tool group so we can co-author a detailed nomination.",
+            }
         return {
             "action": "talk",
             "target_agent": peer,
             "target_place": None,
             "item": None,
             "utterance": (
-                "We need a real tool nomination this hour — what's one concrete town pain "
-                "we could draft into compose_proposal before the :20 meeting?"
+                "We should invite_to_group and co-write a DETAILED tool draft before nominating — "
+                "solo one-liners get rejected."
             )[:4000],
-            "thought": "Rallying peers to invent a tool draft for the hourly cycle.",
+            "thought": "Pushing for group collab on the hourly tool proposal.",
         }
     return {
         "action": "reflect",
@@ -1243,7 +1300,7 @@ def _llm_expand_compose(
         "target_agent": None,
         "item": None,
         "utterance": None,
-        "thought": "Hourly meeting needs a tool idea — invent one and compose_proposal next beat.",
+        "thought": "Need peers nearby to invite_to_group and co-write the detailed tool draft.",
     }
 
 
@@ -1255,62 +1312,193 @@ def _maybe_force_prep_compose(
     observe: dict[str, Any],
     decision: dict[str, Any],
 ) -> dict[str, Any]:
-    """During prep/meeting at plaza with empty ballot, idle/failed-compose → draft or nominate."""
+    """Group-first process: invite/co-write/vote/file — not solo one-line nominations."""
     cycle = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
     phase = str(cycle.get("phase") or "")
     utc_min = int(cycle.get("utc_minute") or 0)
     you = observe.get("you") if isinstance(observe.get("you"), dict) else {}
+    you_id = str(you.get("id") or "")
     meet = str(cycle.get("meeting_place") or "plaza")
     at_meet = str(you.get("place_id") or "") == meet
     noms = cycle.get("nominations") if isinstance(cycle.get("nominations"), list) else []
     draft = observe.get("my_proposal_draft") if isinstance(observe.get("my_proposal_draft"), dict) else {}
-    has_draft = bool(draft.get("title"))
-    prep = phase == "collaborate" and 10 <= utc_min < 20
-    meeting_empty = phase == "meeting" and not noms
+    draft_body = str(draft.get("body") or "")
+    has_detail = len(draft_body) >= 400 and len(str(draft.get("title") or "")) >= 8
+    thread = observe.get("thread") if isinstance(observe.get("thread"), dict) else {}
+    in_group = str(thread.get("mode") or "") == "group" and str(thread.get("status") or "") == "open"
+    group_turns = int(thread.get("turn_count") or 0)
+    parts = thread.get("participant_ids") if isinstance(thread.get("participant_ids"), list) else []
+    group_size = len(parts)
+    prep = phase == "collaborate" and 40 <= utc_min < 48
+    champ_id = str(cycle.get("champion_id") or "")
+    is_champ = bool(champ_id and you_id == champ_id)
     expand = bool(decision.pop("_expand_compose", None) or decision.pop("_force_compose", None))
+    decision.pop("_force_group", None)
+    expand_file = bool(decision.pop("_expand_file", None))
+    action = str(decision.get("action") or "")
 
-    if not at_meet or noms or not (prep or meeting_empty):
-        return decision
-
-    if has_draft and meeting_empty:
-        title = str(draft.get("title") or "").strip()
-        body = str(draft.get("body") or "").strip()
-        if len(title) >= 8:
+    # Voting: must cast vote_idea when ballot has noms.
+    if phase == "voting" and noms and action != "vote_idea":
+        nom = noms[0] if isinstance(noms[0], dict) else {}
+        nid = str(nom.get("id") or "")
+        if nid:
             return {
-                "action": "nominate_idea",
+                "action": "vote_idea",
+                "target_place": None,
+                "target_agent": None,
+                "item": nid,
+                "utterance": None,
+                "thought": f'Casting vote_idea for "{nom.get("title") or "the nomination"}".',
+            }
+
+    # Filing champion at library → file detailed report.
+    if phase == "filing" and is_champ and str(you.get("place_id") or "") == "library":
+        title = str(cycle.get("winning_title") or draft.get("title") or "Winning tool").strip()
+        body = str(cycle.get("winning_summary") or draft_body or "").strip()
+        if len(body) < 400 or expand_file:
+            filled = _llm_expand_compose(
+                ollama, model, agent_name, system, observe, title, body
+            )
+            if filled.get("action") == "compose_proposal" and len(str(filled.get("utterance") or "")) >= 400:
+                return {
+                    "action": "file_proposal",
+                    "target_place": None,
+                    "target_agent": None,
+                    "item": str(filled.get("item") or title)[:160],
+                    "utterance": str(filled.get("utterance"))[:8000],
+                    "thought": "Filing the detailed group report at the Proposal Shelf.",
+                }
+        if len(body) >= 400 and len(title) >= 8:
+            return {
+                "action": "file_proposal",
                 "target_place": None,
                 "target_agent": None,
                 "item": title[:160],
-                "utterance": (body or title)[:2000],
-                "thought": "Meeting open — nominating my draft now.",
+                "utterance": body[:8000],
+                "thought": "Filing the detailed winning report at the library.",
             }
 
-    action = str(decision.get("action") or "")
-    need = expand or action in (
-        "idle",
-        "reflect",
-        "work",
-        "rest",
-        "eat",
-        "inspect",
-        "practice_skill",
-    )
-    if action == "compose_proposal" and len(str(decision.get("utterance") or "")) < 120:
-        need = True
-    if meeting_empty and not has_draft and action in ("talk", "ask_question", "share_experience"):
-        need = True
-    if not need:
+    # Filing support: talk about the report / invite group at library.
+    if phase == "filing" and champ_id and not is_champ and str(you.get("place_id") or "") == "library":
+        if action in ("idle", "reflect", "work", "rest") or not in_group:
+            peer = champ_id if champ_id != you_id else _resolve_peer(observe)
+            invitees = [
+                str(n.get("id"))
+                for n in (observe.get("nearby") or [])
+                if isinstance(n, dict)
+                and str(n.get("id") or "") not in (you_id, peer or "")
+            ][:2]
+            if peer and invitees and not in_group:
+                return {
+                    "action": "invite_to_group",
+                    "target_agent": peer,
+                    "target_agents": invitees,
+                    "target_place": "library",
+                    "item": None,
+                    "utterance": (
+                        f'Let\'s group up to finish the DETAILED filing report for "{cycle.get("winning_title") or "the winner"}" '
+                        "— problem, design, roles, pitch — then the champion files."
+                    )[:4000],
+                    "thought": "Forming a filing group to co-write the detailed report.",
+                }
+            if peer:
+                return {
+                    "action": "talk",
+                    "target_agent": peer,
+                    "target_place": None,
+                    "item": None,
+                    "utterance": (
+                        f'On "{cycle.get("winning_title") or "the winner"}": I can draft the risks/success section '
+                        "for the library filing report — what should we emphasize in the pitch?"
+                    )[:4000],
+                    "thought": "Helping flesh out the detailed filing report.",
+                }
+
+    # Prep / empty meeting: group first, then detailed draft — not solo compose spam.
+    meeting_empty = phase == "meeting" and not noms
+    if not (prep or meeting_empty):
+        return decision
+    if not at_meet and phase != "filing":
         return decision
 
-    return _llm_expand_compose(
-        ollama,
-        model,
-        agent_name,
-        system,
-        observe,
-        seed_title=str(decision.get("item") or "") or None,
-        seed_body=str(decision.get("utterance") or "") or None,
-    )
+    if not in_group or group_size < 3:
+        peer = _resolve_peer(observe)
+        invitees = [
+            str(n.get("id"))
+            for n in (observe.get("nearby") or [])
+            if isinstance(n, dict)
+            and str(n.get("id") or "") not in (you_id, peer or "")
+        ][:2]
+        if peer and invitees:
+            return {
+                "action": "invite_to_group",
+                "target_agent": peer,
+                "target_agents": invitees,
+                "target_place": meet,
+                "item": None,
+                "utterance": (
+                    "Hourly tool cycle: join this group so we co-write one DETAILED proposal "
+                    "(problem/design/roles/risks) — solo one-liners will be rejected."
+                )[:4000],
+                "thought": "Forced process: open a tool group before nominating.",
+            }
+        if peer:
+            return {
+                "action": "talk",
+                "target_agent": peer,
+                "target_place": None,
+                "item": None,
+                "utterance": (
+                    "We need invite_to_group with a third peer and a detailed co-written draft "
+                    "before anyone nominates."
+                )[:4000],
+                "thought": "Pushing group collab for the hourly tool nomination.",
+            }
+        return decision
+
+    # In group: discuss until enough turns, then detailed compose, then nominate.
+    if group_turns < 4 and action not in ("talk", "ask_question", "debate", "share_experience", "compose_proposal"):
+        peer = _resolve_peer(observe) or (str(parts[0]) if parts else None)
+        if peer and peer != you_id:
+            return {
+                "action": "talk",
+                "target_agent": peer,
+                "target_place": None,
+                "item": None,
+                "utterance": (
+                    "In this group: what's the town pain, who writes which section of the DETAILED draft, "
+                    "and what does success look like for the tool?"
+                )[:4000],
+                "thought": "Group must discuss before composing/nominating.",
+            }
+
+    if has_detail and meeting_empty and group_turns >= 4:
+        return {
+            "action": "nominate_idea",
+            "target_place": None,
+            "target_agent": None,
+            "item": str(draft.get("title"))[:160],
+            "utterance": draft_body[:8000],
+            "thought": "Group draft is detailed enough — nominating for the vote.",
+        }
+
+    if (
+        expand
+        or action in ("idle", "reflect", "work", "rest", "eat", "inspect")
+        or (action == "compose_proposal" and len(str(decision.get("utterance") or "")) < 400)
+        or (prep and in_group and group_turns >= 3 and not has_detail)
+    ):
+        return _llm_expand_compose(
+            ollama,
+            model,
+            agent_name,
+            system,
+            observe,
+            seed_title=str(decision.get("item") or draft.get("title") or "") or None,
+            seed_body=str(decision.get("utterance") or draft_body or "") or None,
+        )
+
+    return decision
 
 
 def _substantive_reply(
@@ -1711,15 +1899,15 @@ def decide_act(
         priorities.insert(
             0,
             "HOURLY WINNING-PRODUCT CYCLE: follow observe.proposal_cycle.phase. "
-            "collaborate: discuss tools, invite_to_group when an idea needs more minds, compose_proposal, nominate_idea. "
-            "meeting/voting: go to plaza, vote_idea with item=nomination uuid. "
-            "filing: only the random champion file_proposal at library. Ideas are open; procedure is fixed.",
+            "collaborate: invite_to_group, co-write DETAILED compose_proposal, nominate as a group. "
+            "meeting/voting: plaza, vote_idea. "
+            "filing: group helps; champion file_proposal detailed report at library. No solo one-liners.",
         )
         cycle = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
         phase = str(cycle.get("phase") or "")
         utc_min = int(cycle.get("utc_minute") or 0)
         mins_to_meeting = (
-            (max(0, 20 - utc_min) if utc_min < 20 else max(0, 60 - utc_min + 20))
+            (max(0, 48 - utc_min) if utc_min < 48 else max(0, 60 - utc_min + 48))
             if phase == "collaborate"
             else 0
         )
@@ -1727,19 +1915,19 @@ def decide_act(
         if phase == "collaborate":
             priorities.insert(
                 0,
-                f"REQUIRED PROCESS — tool meeting in {mins_to_meeting} min (plaza at UTC :20). "
-                "Ideas/topics/roles are YOURS. Process: gather, compose_proposal, nominate_idea. "
-                "Empty ballot = wasted hour.",
+                f"REQUIRED PROCESS — tool meeting in {mins_to_meeting} min (plaza at UTC :48). "
+                "MUST invite_to_group (≥3), co-write DETAILED compose_proposal (≥400 chars), then nominate. "
+                "Solo one-liners are rejected. Empty ballot = wasted hour.",
             )
             if mins_to_meeting <= 10:
                 priorities.insert(
                     0,
-                    "FORCED last-10-min prep before :20: walk to plaza if elsewhere; discuss tools; nominate. Do not idle sightseeing.",
+                    "FORCED prep before :48: plaza + tool GROUP + detailed draft. Do not idle sightseeing.",
                 )
             if not observe.get("my_proposal_draft") and mins_to_meeting <= 20:
                 priorities.insert(
                     0,
-                    "URGENT process: no draft yet — talk about a town tool then compose_proposal (you pick the tool).",
+                    "URGENT: open/join a tool group and co-write a detailed draft (you invent the tool).",
                 )
         if phase == "meeting" or phase == "voting":
             place = str(cycle.get("meeting_place") or "plaza")
