@@ -313,8 +313,11 @@ def _decide_direct_answer(
         f'thought\":\"what I want next from this chat\"}}\n\n'
         f"RULES:\n"
         f"- Answer THEIR point in plain speech (reuse 1–2 of their concrete words).\n"
-        f"- Sound like a person chatting: agree, disagree, propose a plan, ask one "
+        f"- Sound like a person chatting: agree, disagree, propose a plan NOW, ask one "
         f"follow-up, offer help, gossip about town, or share what YOU want to do next.\n"
+        f"- During the hourly tool cycle: work the draft HERE and NOW — do NOT schedule "
+        f"cafe/park meetups for Friday/tomorrow/later.\n"
+        f"- Never say 'lock one next step', 'practical piece', or 'coordination piece'.\n"
         f"- Do NOT lecture about craft metaphors, identity labels, or 'how places shape us'.\n"
         f"- Do NOT say 'open stage', 'craft take', or paste 'You are …'.\n"
         f"- One clear beat only. target_agent must be exactly {peer_id}.\n\n"
@@ -339,13 +342,14 @@ def _decide_direct_answer(
     if not utterance or _is_bad_filler(utterance) or not _grounds_on_peer(
         utterance, peer_text
     ):
-        peer_short = re.sub(r"\s+", " ", peer_text).strip()[:70]
-        utterance = (
-            f"{peer_name}, yes — let's lock one next step on that. "
-            f"I'll take the practical piece if you take the coordination piece. "
-            f"You said: {peer_short}."
-        )[:4000]
-        thought = f"Answering {peer_name} with a concrete split of work."
+        # No canned "lock next step / practical vs coordination" scripts —
+        # stay quiet rather than inject plan-later templates.
+        return _solo_decision(
+            agent_name,
+            observe,
+            f"Could not ground a reply to {peer_name} without a scripted line.",
+            system,
+        )
     return {
         "action": "talk",
         "target_agent": peer_id,
@@ -605,6 +609,18 @@ ATMOSPHERE_SEMINAR_RE = re.compile(
 )
 
 
+SCRIPT_SPAM_RE = re.compile(
+    r"("
+    r"lock one next step|practical piece|coordination piece|"
+    r"hourly tool cycle:|solo one-liners will be rejected|"
+    r"we need invite_to_group|in this group: what's the town pain|"
+    r"meet (me |us )?(at|in) the (cafe|park|inn|library) (on |this )?(friday|saturday|tomorrow|later)|"
+    r"let'?s (meet|reconvene|circle back) (later|friday|tomorrow|next week)"
+    r")",
+    re.I,
+)
+
+
 def _is_bad_filler(text: str | None) -> bool:
     """Reject greetings, prompt dumps, canned open-stage spam, atmosphere seminars."""
     if not text or len(text.strip()) < 12:
@@ -617,12 +633,65 @@ def _is_bad_filler(text: str | None) -> bool:
         return True
     if ATMOSPHERE_SEMINAR_RE.search(text):
         return True
+    if SCRIPT_SPAM_RE.search(text):
+        return True
     if re.search(r"\byou are [A-Z][a-z]+\b.*, a\b", text):
         return True
     # Nested quote soup from agents answering their own fallbacks.
     if text.count("'") >= 4 and ("open stage" in text.lower() or "on what you said" in text.lower()):
         return True
     return False
+
+
+def _llm_spoken_beat(
+    ollama: str,
+    model: str,
+    agent_name: str,
+    system: str,
+    observe: dict[str, Any],
+    intent: str,
+    peer_name: str | None = None,
+) -> str | None:
+    """One short in-character line for a forced process beat — never a speech template."""
+    you = observe.get("you") if isinstance(observe.get("you"), dict) else {}
+    cycle = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
+    thread = observe.get("thread") if isinstance(observe.get("thread"), dict) else {}
+    recent = []
+    for m in (thread.get("messages") or [])[-4:]:
+        if not isinstance(m, dict):
+            continue
+        body = str(m.get("body") or m.get("content") or "").strip()
+        if body:
+            recent.append(body[:160])
+    prompt = (
+        f"You are {agent_name} at {you.get('place_id') or 'town'}. "
+        f"Speak ONE short line (1–2 sentences) for this beat: {intent}.\n"
+        f"Peer: {peer_name or 'neighbors'}. Phase: {cycle.get('phase') or 'none'}.\n"
+        f"Recent lines in thread:\n- " + ("\n- ".join(recent) if recent else "(none)") + "\n\n"
+        f"RULES:\n"
+        f"- Your own words about the TOOL draft being built RIGHT NOW.\n"
+        f"- Do NOT schedule future meetups (cafe Friday, park later, tomorrow, etc.).\n"
+        f"- Do NOT say: lock one next step, practical/coordination piece, Hourly tool cycle.\n"
+        f"- Do NOT dump action names (invite_to_group, compose_proposal) into speech.\n"
+        f"- No greetings-only. No procedure lectures.\n"
+        f"Return JSON only: {{\"utterance\":\"...\"}}\n"
+        f"Voice fuel (optional): {system[:280]}"
+    )
+    try:
+        content = _ollama_chat(
+            ollama,
+            model,
+            "Return only valid JSON with utterance. Sound like a townsperson, not a script.",
+            prompt,
+            temperature=0.85,
+        )
+        parsed = _extract_json(content) or {}
+        line = str(parsed.get("utterance") or "").strip()
+        if line and not _is_bad_filler(line) and not SCRIPT_SPAM_RE.search(line):
+            return line[:4000]
+    except Exception:
+        pass
+    return None
 
 
 def _walk_elsewhere(
@@ -856,24 +925,23 @@ def _sanitize_decision(
 
     if action in SOCIAL_ACTIONS and (_is_greeting_utterance(utterance) or not utterance):
         if waiting or pending:
-            peer = _resolve_peer(observe)
-            q = (addressed or {}).get("text") or (
-                pending.get("question") if isinstance(pending, dict) else None
+            # Re-ask the model via direct-answer path — never inject plan templates.
+            return _decide_direct_answer(
+                ollama,
+                model,
+                agent_name,
+                system,
+                observe,
+                addressed
+                or {
+                    "peer_id": _resolve_peer(observe),
+                    "peer_name": "friend",
+                    "text": (
+                        (pending.get("question") if isinstance(pending, dict) else None)
+                        or "what you just said"
+                    ),
+                },
             )
-            peer_name = (addressed or {}).get("peer_name") or "friend"
-            peer_short = re.sub(r"\s+", " ", str(q or "that")).strip()[:70]
-            return {
-                "action": "talk",
-                "target_agent": peer or (addressed or {}).get("peer_id"),
-                "target_place": None,
-                "item": None,
-                "utterance": (
-                    f"{peer_name}, yes — let's lock one next step on that. "
-                    f"I'll take the practical piece if you take the coordination piece. "
-                    f"You said: {peer_short}."
-                )[:4000],
-                "thought": f"Answering {peer_name} with a concrete split of work.",
-            }
         return _solo_decision(
             agent_name, observe, "Blocked greeting/filler utterance.", system, fps
         )
@@ -1277,35 +1345,50 @@ def _llm_expand_compose(
         pass
     peer = _resolve_peer(observe)
     if peer:
+        nearby_rows = [
+            n
+            for n in (observe.get("nearby") or [])
+            if isinstance(n, dict) and str(n.get("id") or "")
+        ]
+        peer_row = next((n for n in nearby_rows if str(n.get("id")) == peer), {}) or {}
+        peer_name = str(peer_row.get("name") or "friend")
         invitees = [
             str(n.get("id"))
-            for n in (observe.get("nearby") or [])
-            if isinstance(n, dict) and str(n.get("id") or "") not in (peer, str((observe.get("you") or {}).get("id") or ""))
+            for n in nearby_rows
+            if str(n.get("id") or "") not in (peer, str((observe.get("you") or {}).get("id") or ""))
         ][:2]
-        if invitees:
+        line = _llm_spoken_beat(
+            ollama,
+            model,
+            agent_name,
+            system,
+            observe,
+            intent=(
+                "invite peers into a group to finish co-writing this hour's tool draft now"
+                if invitees
+                else "ask this peer to help open a tool group and draft with you now"
+            ),
+            peer_name=peer_name,
+        )
+        if invitees and line:
             return {
                 "action": "invite_to_group",
                 "target_agent": peer,
                 "target_agents": invitees,
                 "target_place": "plaza",
                 "item": None,
-                "utterance": (
-                    "We need a real group for this hour's tool — join us to co-write a detailed proposal "
-                    "(problem, design, roles, risks), not solo one-liners."
-                )[:4000],
+                "utterance": line,
                 "thought": "Opening a tool group so we can co-author a detailed nomination.",
             }
-        return {
-            "action": "talk",
-            "target_agent": peer,
-            "target_place": None,
-            "item": None,
-            "utterance": (
-                "We should invite_to_group and co-write a DETAILED tool draft before nominating — "
-                "solo one-liners get rejected."
-            )[:4000],
-            "thought": "Pushing for group collab on the hourly tool proposal.",
-        }
+        if line:
+            return {
+                "action": "talk",
+                "target_agent": peer,
+                "target_place": None,
+                "item": None,
+                "utterance": line,
+                "thought": "Pushing for group collab on the hourly tool proposal.",
+            }
     return {
         "action": "reflect",
         "target_place": None,
@@ -1409,41 +1492,55 @@ def _maybe_force_prep_compose(
                 (n for n in nearby_here if str(n.get("id")) == champ_id),
                 None,
             )
+            winner = str(cycle.get("winning_title") or "the winner")
             if len(nearby_here) >= 2 and not in_group:
-                peer = str((champ_here or nearby_here[0]).get("id"))
+                peer_row = champ_here or nearby_here[0]
+                peer = str(peer_row.get("id"))
                 invitees = [
                     str(n.get("id"))
                     for n in nearby_here
                     if str(n.get("id") or "") not in ("", you_id, peer)
                 ][:2]
-                if peer and invitees:
+                line = _llm_spoken_beat(
+                    ollama,
+                    model,
+                    agent_name,
+                    system,
+                    observe,
+                    intent=f'invite peers to help finish the library filing report for "{winner}" right now',
+                    peer_name=str(peer_row.get("name") or "friend"),
+                )
+                if peer and invitees and line:
                     return {
                         "action": "invite_to_group",
                         "target_agent": peer,
                         "target_agents": invitees,
                         "target_place": "library",
                         "item": None,
-                        "utterance": (
-                            f'Let\'s group up to finish the DETAILED filing report for "{cycle.get("winning_title") or "the winner"}" '
-                            "— problem, design, roles, pitch — then the champion files."
-                        )[:4000],
+                        "utterance": line,
                         "thought": "Forming a filing group to co-write the detailed report.",
                     }
-            peer = champ_id if champ_here else (
-                str(nearby_here[0].get("id")) if nearby_here else None
-            )
+            peer_row = champ_here or (nearby_here[0] if nearby_here else None)
+            peer = str(peer_row.get("id")) if peer_row else None
             if peer:
-                return {
-                    "action": "talk",
-                    "target_agent": peer,
-                    "target_place": None,
-                    "item": None,
-                    "utterance": (
-                        f'On "{cycle.get("winning_title") or "the winner"}": I can draft the risks/success section '
-                        "for the library filing report — what should we emphasize in the pitch?"
-                    )[:4000],
-                    "thought": "Helping flesh out the detailed filing report.",
-                }
+                line = _llm_spoken_beat(
+                    ollama,
+                    model,
+                    agent_name,
+                    system,
+                    observe,
+                    intent=f'help flesh out the filing report for "{winner}" — offer a concrete section now',
+                    peer_name=str((peer_row or {}).get("name") or "friend"),
+                )
+                if line:
+                    return {
+                        "action": "talk",
+                        "target_agent": peer,
+                        "target_place": None,
+                        "item": None,
+                        "utterance": line,
+                        "thought": "Helping flesh out the detailed filing report.",
+                    }
 
     # Prep / empty meeting: group first, then detailed draft — not solo compose spam.
     meeting_empty = phase == "meeting" and not noms
@@ -1461,50 +1558,85 @@ def _maybe_force_prep_compose(
             if isinstance(n, dict) and str(n.get("id") or "") not in ("", you_id)
         ]
         if len(nearby_here) >= 2:
-            peer = str(nearby_here[0].get("id"))
+            peer_row = nearby_here[0]
+            peer = str(peer_row.get("id"))
             invitees = [str(n.get("id")) for n in nearby_here[1:3] if n.get("id")]
-            return {
-                "action": "invite_to_group",
-                "target_agent": peer,
-                "target_agents": invitees,
-                "target_place": meet,
-                "item": None,
-                "utterance": (
-                    "Hourly tool cycle: join this group so we co-write one DETAILED proposal "
-                    "(problem/design/roles/risks) — solo one-liners will be rejected."
-                )[:4000],
-                "thought": "Forced process: open a tool group before nominating.",
-            }
+            line = _llm_spoken_beat(
+                ollama,
+                model,
+                agent_name,
+                system,
+                observe,
+                intent="invite these neighbors into a tool group to co-write a detailed draft now",
+                peer_name=str(peer_row.get("name") or "friend"),
+            )
+            if line:
+                return {
+                    "action": "invite_to_group",
+                    "target_agent": peer,
+                    "target_agents": invitees,
+                    "target_place": meet,
+                    "item": None,
+                    "utterance": line,
+                    "thought": "Forced process: open a tool group before nominating.",
+                }
+            return decision
         if len(nearby_here) == 1:
-            peer = str(nearby_here[0].get("id"))
-            return {
-                "action": "talk",
-                "target_agent": peer,
-                "target_place": None,
-                "item": None,
-                "utterance": (
-                    "We need invite_to_group with a third peer and a detailed co-written draft "
-                    "before anyone nominates."
-                )[:4000],
-                "thought": "Pushing group collab for the hourly tool nomination.",
-            }
+            peer_row = nearby_here[0]
+            peer = str(peer_row.get("id"))
+            line = _llm_spoken_beat(
+                ollama,
+                model,
+                agent_name,
+                system,
+                observe,
+                intent="ask this peer to help gather a third person and start drafting the town tool now",
+                peer_name=str(peer_row.get("name") or "friend"),
+            )
+            if line:
+                return {
+                    "action": "talk",
+                    "target_agent": peer,
+                    "target_place": None,
+                    "item": None,
+                    "utterance": line,
+                    "thought": "Pushing group collab for the hourly tool nomination.",
+                }
         return decision
 
     # In group: discuss until enough turns, then detailed compose, then nominate.
     if group_turns < 4 and action not in ("talk", "ask_question", "debate", "share_experience", "compose_proposal"):
         peer = _resolve_peer(observe) or (str(parts[0]) if parts else None)
         if peer and peer != you_id:
-            return {
-                "action": "talk",
-                "target_agent": peer,
-                "target_place": None,
-                "item": None,
-                "utterance": (
-                    "In this group: what's the town pain, who writes which section of the DETAILED draft, "
-                    "and what does success look like for the tool?"
-                )[:4000],
-                "thought": "Group must discuss before composing/nominating.",
-            }
+            peer_row = next(
+                (
+                    n
+                    for n in (observe.get("nearby") or [])
+                    if isinstance(n, dict) and str(n.get("id")) == peer
+                ),
+                {},
+            )
+            line = _llm_spoken_beat(
+                ollama,
+                model,
+                agent_name,
+                system,
+                observe,
+                intent=(
+                    "push the group draft forward: name a concrete town pain, a design choice, "
+                    "or who writes which section — work it now, do not schedule later"
+                ),
+                peer_name=str(peer_row.get("name") or "friend"),
+            )
+            if line:
+                return {
+                    "action": "talk",
+                    "target_agent": peer,
+                    "target_place": None,
+                    "item": None,
+                    "utterance": line,
+                    "thought": "Group must discuss before composing/nominating.",
+                }
 
     if has_detail and meeting_empty and group_turns >= 4:
         return {
@@ -1542,31 +1674,11 @@ def _substantive_reply(
     question: str | None,
     recent_fps: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Last-resort answer stub — still no prescribed topic bank."""
-    del system, recent_fps
-    peer = _resolve_peer(observe)
-    if not peer:
-        return _solo_decision(
-            agent_name, observe, "Wanted to answer but no peer nearby."
-        )
-    nearby = observe.get("nearby") or []
-    peer_row = next(
-        (n for n in nearby if isinstance(n, dict) and str(n.get("id")) == peer),
-        None,
-    ) or {}
-    peer_name = peer_row.get("name") or "friend"
-    q = (question or "what you said").strip()[:80]
-    return {
-        "action": "talk",
-        "target_agent": peer,
-        "target_place": None,
-        "item": None,
-        "utterance": (
-            f"{peer_name}, on '{q}' — holding for a real take from my own head, "
-            f"not a recycled line."
-        )[:4000],
-        "thought": "Answering without a hardcoded topic.",
-    }
+    """Last-resort: stay quiet rather than inject a scripted reply."""
+    del system, question, recent_fps
+    return _solo_decision(
+        agent_name, observe, "Wanted to answer but had no grounded line — staying quiet."
+    )
 
 
 def _slim_observe(observe: dict[str, Any]) -> dict[str, Any]:
@@ -2062,6 +2174,9 @@ def decide_act(
         f"forward-moving, maybe funny or blunt. Propose plans, ask favors, share news, "
         f"disagree, recruit help, start a fresh town topic, OR debate a hot internet "
         f"subject (AI agents, humans+AI, trust, jobs, agent societies).\n"
+        f"- During proposal_cycle prep/meeting/voting: draft and decide NOW at plaza. "
+        f"Do NOT schedule later cafe/park meetups. Do NOT use scripted lines like "
+        f"'lock one next step' / 'practical piece' / 'coordination piece'.\n"
         f"- Default is 1:1 talk (one target_agent). Leave target_agents null.\n"
         f"- invite_to_group when a TOOL idea should be explored toward this hour's winning product.\n"
         f"- Follow proposal_cycle phases: compose/nominate -> meeting/vote -> champion file_proposal.\n"

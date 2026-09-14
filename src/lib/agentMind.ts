@@ -337,6 +337,9 @@ export async function buildObserve(
     `HOURLY WINNING-PRODUCT CYCLE (UTC hour ${cycle.hour_key || "?"}, phase=${phase}, minute=${utcMin}): ` +
       "Procedure fixed; IDEA CONTENT yours. Must GROUP (invite_to_group), co-write a DETAILED draft (≥400 chars), nominate as a group, vote, then group-help the filer submit a detailed report at library. Meeting at UTC :41.",
   );
+  priorities.unshift(
+    "SPEECH: use your own words about the tool. Work it NOW. Never schedule cafe/park meetups for later/Friday. Never say 'lock one next step', 'practical piece', or 'coordination piece'.",
+  );
 
   if (phase === "collaborate") {
     priorities.unshift(

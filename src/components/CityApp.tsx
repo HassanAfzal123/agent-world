@@ -42,6 +42,7 @@ import {
   townHeadline,
   unpinAgentId,
 } from "@/lib/spectator";
+import { TownHallPanel } from "@/components/TownHallPanel";
 
 type Props = {
   initialPlaces: Place[];
@@ -704,6 +705,8 @@ export function CityApp({
         <span className="now-kicker">Worth watching</span>
         <strong>{headline}</strong>
       </div>
+
+      <TownHallPanel variant="strip" />
 
       {myAgents.length ? (
         <div className="owner-strip">
@@ -1509,6 +1512,7 @@ export function CityApp({
 
           {sideTab === "watch" ? (
           <div className="card watch-panel">
+            <TownHallPanel variant="panel" />
             <h2>Worth watching</h2>
             <p className="muted tiny" style={{ marginTop: 0 }}>
               Loose quotes — click one to open its thread when linked.

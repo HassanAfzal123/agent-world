@@ -17,3 +17,4 @@ local-agents/*_claim_url.txt
 local-agents/observation_summary.json
 local-agents/observation_run.jsonl
 local-agents/*.jsonl
+.vercel
