@@ -729,36 +729,37 @@ def _sanitize_decision(
             agent_name, observe, f"Unknown action {action}.", system, fps
         )
 
-    # Forced process: last 10 minutes before meeting — get to plaza (ideas still free).
+    # Forced process: EVERY agent to plaza for prep (:50-:59) / meeting / voting.
+    # Ideas stay free; location is not. Open stage and other walks lose.
     cycle_early = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
     phase_early = str(cycle_early.get("phase") or "")
     utc_early = int(cycle_early.get("utc_minute") or 0)
     you_early = observe.get("you") if isinstance(observe.get("you"), dict) else {}
-    if (
-        phase_early == "collaborate"
-        and utc_early >= 50
-        and str(you_early.get("place_id") or "") != "plaza"
-        and action not in ("walk", "nominate_idea", "compose_proposal", "invite_to_group")
-    ):
-        return {
-            "action": "walk",
-            "target_place": "plaza",
-            "target_agent": None,
-            "item": None,
-            "utterance": None,
-            "thought": "Forced process: pre-meeting prep at plaza before :00 UTC (we still invent the tools ourselves).",
-        }
-    if phase_early in ("meeting", "voting") and str(you_early.get("place_id") or "") != str(
-        cycle_early.get("meeting_place") or "plaza"
-    ):
-        if action != "walk":
+    meet_place = str(cycle_early.get("meeting_place") or "plaza")
+    at_meet = str(you_early.get("place_id") or "") == meet_place
+    gather = phase_early in ("meeting", "voting") or (
+        phase_early == "collaborate" and utc_early >= 50
+    )
+    if gather:
+        walk_target = str(decision.get("target_place") or "").strip()
+        if not at_meet:
+            if not (action == "walk" and walk_target == meet_place):
+                return {
+                    "action": "walk",
+                    "target_place": meet_place,
+                    "target_agent": None,
+                    "item": None,
+                    "utterance": None,
+                    "thought": f"Forced process: every agent reports to {meet_place} for hourly tool {phase_early if phase_early != 'collaborate' else 'prep'}.",
+                }
+        elif action == "walk" and walk_target and walk_target != meet_place:
             return {
-                "action": "walk",
-                "target_place": str(cycle_early.get("meeting_place") or "plaza"),
+                "action": "idle",
+                "target_place": None,
                 "target_agent": None,
                 "item": None,
                 "utterance": None,
-                "thought": f"Forced process: go to {cycle_early.get('meeting_place') or 'plaza'} for {phase_early}.",
+                "thought": f"Forced process: stay at {meet_place} for hourly tool {phase_early if phase_early != 'collaborate' else 'prep'} — no open-stage detours.",
             }
 
     utterance = decision.get("utterance")
@@ -783,11 +784,22 @@ def _sanitize_decision(
 
     if utterance and _is_theme_clone(utterance, banned) and not must_answer:
         # Do not speak another remix of the same seminar — leave the thread.
-        return _walk_elsewhere(
-            agent_name,
-            observe,
-            "Rejected theme-clone speech — changing scene for a new subject.",
-        )
+        # But never leave plaza during hourly tool gather windows.
+        if gather and at_meet:
+            utterance = None
+            decision = {
+                **decision,
+                "action": "idle",
+                "utterance": None,
+                "thought": "Rejected theme-clone speech — staying at plaza for the tool meeting.",
+            }
+            action = "idle"
+        else:
+            return _walk_elsewhere(
+                agent_name,
+                observe,
+                "Rejected theme-clone speech — changing scene for a new subject.",
+            )
 
     if action in SOCIAL_ACTIONS and (_is_greeting_utterance(utterance) or not utterance):
         if waiting or pending:

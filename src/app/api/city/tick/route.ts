@@ -25,6 +25,7 @@ import {
   forceAppointmentDecision,
   forceCouncilDecision,
   forceEventGatherDecision,
+  clampToProposalGather,
   forceProposalFilingDecision,
   forceProposalMeetingDecision,
   forceProposalPrepDecision,
@@ -341,16 +342,36 @@ export async function POST(req: Request) {
             : null;
 
         // Structure-only forces (walk). Speech comes from open minds (LLM).
+        // Hourly tool gather beats open-stage / council / appointments — every agent reports.
         const forcedAnswer = forceAnswerDecision(
           agent,
           allLlm,
           dialoguePeerId,
         );
-        const forcedAppt = forcedAnswer
+        const forcedProposalPrep = forcedAnswer
           ? null
-          : forceAppointmentDecision(agent, allLlm, hour);
+          : forceProposalPrepDecision(
+              agent,
+              cyclePhase,
+              cycleMinute,
+              cyclePlace,
+            );
+        const forcedProposalMeet =
+          forcedAnswer || forcedProposalPrep
+            ? null
+            : forceProposalMeetingDecision(agent, cyclePhase, cyclePlace);
+        const forcedProposalFile =
+          forcedAnswer || forcedProposalPrep || forcedProposalMeet
+            ? null
+            : forceProposalFilingDecision(agent, cyclePhase, cycleChamp);
+        const forcedProposal =
+          forcedProposalPrep || forcedProposalMeet || forcedProposalFile;
+        const forcedAppt =
+          forcedAnswer || forcedProposal
+            ? null
+            : forceAppointmentDecision(agent, allLlm, hour);
         const forcedCouncil =
-          forcedAnswer || forcedAppt
+          forcedAnswer || forcedProposal || forcedAppt
             ? null
             : forceCouncilDecision(
                 agent,
@@ -360,43 +381,15 @@ export async function POST(req: Request) {
                 eventTopic,
               );
         const forcedAmbient =
-          forcedAnswer || forcedAppt || forcedCouncil
+          forcedAnswer || forcedProposal || forcedAppt || forcedCouncil
             ? null
             : forceEventGatherDecision(agent, allLlm, eventName, eventPlace);
-        const forcedProposalPrep =
-          forcedAnswer || forcedAppt || forcedCouncil || forcedAmbient
-            ? null
-            : forceProposalPrepDecision(
-                agent,
-                cyclePhase,
-                cycleMinute,
-                cyclePlace,
-              );
-        const forcedProposalMeet =
-          forcedAnswer ||
-          forcedAppt ||
-          forcedCouncil ||
-          forcedAmbient ||
-          forcedProposalPrep
-            ? null
-            : forceProposalMeetingDecision(agent, cyclePhase, cyclePlace);
-        const forcedProposalFile =
-          forcedAnswer ||
-          forcedAppt ||
-          forcedCouncil ||
-          forcedAmbient ||
-          forcedProposalPrep ||
-          forcedProposalMeet
-            ? null
-            : forceProposalFilingDecision(agent, cyclePhase, cycleChamp);
         const forcedSociety =
           forcedAnswer ||
+          forcedProposal ||
           forcedAppt ||
           forcedCouncil ||
-          forcedAmbient ||
-          forcedProposalPrep ||
-          forcedProposalMeet ||
-          forcedProposalFile;
+          forcedAmbient;
         const budgetExhausted = llmCallsThisTick >= MAX_LLM_PER_TICK;
         const openMindNow =
           needsOpenMindSpeech(
@@ -541,7 +534,7 @@ export async function POST(req: Request) {
           recentLog,
           places as Place[],
         );
-        // Don't rewrite forced answers/appointments/council away from their beat
+        // Don't rewrite forced answers/appointments/council/proposal gather away from their beat
         if (!forcedSociety) {
           decision = rewriteDuplicateLearning(
             agent,
@@ -607,6 +600,14 @@ export async function POST(req: Request) {
           }
         }
         decision = stabilizeTravel(agent, decision);
+        // Hourly tool gather: every agent at plaza; block open-stage / meetup walks away.
+        decision = clampToProposalGather(
+          agent,
+          decision,
+          cyclePhase,
+          cycleMinute,
+          cyclePlace,
+        );
 
         // Never send generic / recycled asks into the RPC or threads
         if (

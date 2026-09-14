@@ -247,7 +247,17 @@ export function forceEventGatherDecision(
   };
 }
 
-/** Late collaborate (last 10 min before next :00): force walk to plaza for pre-meeting prep. */
+/** True during forced plaza gather windows (all claimed agents). */
+export function inProposalPlazaGather(
+  phase: string | null | undefined,
+  utcMinute: number | null | undefined,
+): boolean {
+  if (phase === "meeting" || phase === "voting") return true;
+  if (phase === "collaborate" && Number(utcMinute ?? 0) >= 50) return true;
+  return false;
+}
+
+/** Late collaborate (last 10 min before next :00): every agent walks to plaza. */
 export function forceProposalPrepDecision(
   agent: Agent,
   phase: string | null | undefined,
@@ -259,7 +269,6 @@ export function forceProposalPrepDecision(
   if (m < 50) return null; // minutes 50-59 = last 10 before :00 meeting
   const place = meetingPlace || "plaza";
   if (agent.place_id === place) return null;
-  if (agent.pending_answer_to) return null;
   if (
     agent.status === "walking" &&
     agent.target_place_id === place
@@ -270,13 +279,13 @@ export function forceProposalPrepDecision(
     action: "walk",
     target_place: place,
     thought:
-      "Forced process: pre-meeting tool prep — walk to the plaza before the :00 UTC meeting (ideas are still ours).",
+      "Forced process: pre-meeting tool prep — every agent reports to the plaza before the :00 UTC meeting (ideas are still ours).",
     utterance: null,
     item: null,
   };
 }
 
-/** Hourly winning-product meeting / voting: pull free agents to plaza. */
+/** Hourly winning-product meeting / voting: every agent to plaza (redirect mid-walk). */
 export function forceProposalMeetingDecision(
   agent: Agent,
   phase: string | null | undefined,
@@ -285,22 +294,75 @@ export function forceProposalMeetingDecision(
   if (phase !== "meeting" && phase !== "voting") return null;
   const place = meetingPlace || "plaza";
   if (agent.place_id === place) return null;
-  if (agent.pending_answer_to) return null;
-  if (agent.appointment_with || agent.appointment_place) return null;
   if (
     agent.status === "walking" &&
-    agent.target_place_id &&
-    agent.target_place_id !== place
+    agent.target_place_id === place
   ) {
     return null;
   }
-  // Meeting/voting: pull even if talking — process overrides chitchat elsewhere.
+  // Redirect even if already walking elsewhere — process beats open stage / chitchat.
   return {
     action: "walk",
     target_place: place,
-    thought: `Forced process: hourly tool ${phase} at ${place}. Decisions (ideas/votes) stay yours.`,
+    thought: `Forced process: every agent reports to ${place} for hourly tool ${phase}. Decisions (ideas/votes) stay yours.`,
     utterance: null,
     item: null,
+  };
+}
+
+/**
+ * After LLM / other nudges: nobody leaves plaza during prep/meeting/voting,
+ * and anyone elsewhere is sent there.
+ */
+export function clampToProposalGather(
+  agent: Agent,
+  decision: AgentDecision,
+  phase: string | null | undefined,
+  utcMinute: number | null | undefined,
+  meetingPlace: string | null | undefined,
+): AgentDecision {
+  if (!inProposalPlazaGather(phase, utcMinute)) return decision;
+  const place = meetingPlace || "plaza";
+  const label =
+    phase === "collaborate" ? "prep" : String(phase || "meeting");
+
+  const goingToPlace =
+    decision.action === "walk" && decision.target_place === place;
+  const leavingPlace =
+    decision.action === "walk" &&
+    Boolean(decision.target_place) &&
+    decision.target_place !== place;
+
+  if (agent.place_id === place) {
+    if (leavingPlace) {
+      return {
+        action: "idle",
+        target_place: null,
+        target_agent: null,
+        item: null,
+        utterance: null,
+        thought: `Forced process: stay at ${place} for hourly tool ${label} — do not leave for open stage or other errands.`,
+      };
+    }
+    return decision;
+  }
+
+  if (goingToPlace) return decision;
+  if (
+    agent.status === "walking" &&
+    agent.target_place_id === place &&
+    !leavingPlace
+  ) {
+    return decision;
+  }
+
+  return {
+    action: "walk",
+    target_place: place,
+    target_agent: null,
+    item: null,
+    utterance: null,
+    thought: `Forced process: every agent reports to ${place} for hourly tool ${label}.`,
   };
 }
 
