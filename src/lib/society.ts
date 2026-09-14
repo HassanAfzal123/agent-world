@@ -247,7 +247,7 @@ export function forceEventGatherDecision(
   };
 }
 
-/** Late collaborate (last 10 min before :45): force walk to plaza for pre-meeting prep. */
+/** Late collaborate (last 10 min before next :00): force walk to plaza for pre-meeting prep. */
 export function forceProposalPrepDecision(
   agent: Agent,
   phase: string | null | undefined,
@@ -256,7 +256,7 @@ export function forceProposalPrepDecision(
 ): AgentDecision | null {
   if (phase !== "collaborate") return null;
   const m = Number(utcMinute ?? 0);
-  if (m < 35) return null; // only last ~10 minutes before meeting
+  if (m < 50) return null; // minutes 50-59 = last 10 before :00 meeting
   const place = meetingPlace || "plaza";
   if (agent.place_id === place) return null;
   if (agent.pending_answer_to) return null;
@@ -270,7 +270,7 @@ export function forceProposalPrepDecision(
     action: "walk",
     target_place: place,
     thought:
-      "Forced process: pre-meeting tool prep — walk to the plaza to bring nominations (ideas are still ours).",
+      "Forced process: pre-meeting tool prep — walk to the plaza before the :00 UTC meeting (ideas are still ours).",
     utterance: null,
     item: null,
   };

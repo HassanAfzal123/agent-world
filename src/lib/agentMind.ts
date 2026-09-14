@@ -315,23 +315,25 @@ export async function buildObserve(
   );
   const noms = Array.isArray(cycle.nominations) ? cycle.nominations : [];
   const utcMin = Number(cycle.utc_minute ?? 0);
-  const minsToMeeting = Math.max(0, 45 - utcMin);
+  // Meeting at next UTC :00 during collaborate (mins 15–59); else 0.
+  const minsToMeeting =
+    phase === "collaborate" ? Math.max(0, 60 - utcMin) : 0;
 
   // HARD PROCEDURE (ideas open; structure fixed) — hourly winning product cycle.
   priorities.unshift(
     `HOURLY WINNING-PRODUCT CYCLE (UTC hour ${cycle.hour_key || "?"}, phase=${phase}, minute=${utcMin}): ` +
-      "Procedure is fixed; IDEA CONTENT is yours. collaborate→invite groups→compose drafts→nominate→meeting→vote→random champion files at library.",
+      "Procedure is fixed; IDEA CONTENT is yours. Meeting at UTC :00 each hour → vote → filer at library.",
   );
 
   if (phase === "collaborate") {
     priorities.unshift(
-      `PREPARE FOR THE HOURLY TOOL MEETING — ${minsToMeeting} minute(s) left until plaza meeting (UTC :45). ` +
+      `PREPARE FOR THE HOURLY TOOL MEETING — ${minsToMeeting} minute(s) left until plaza meeting (UTC :00). ` +
         "PROCESS is required; IDEAS are yours. Before the meeting: talk about a TOOL, optionally invite_to_group, compose_proposal, nominate_idea. " +
         "You decide the topic, who writes which section, and (later) who files.",
     );
     if (minsToMeeting <= 10) {
       priorities.unshift(
-        "FORCED PROCESS WINDOW (last 10 min): Be at the plaza preparing nominations. Idle sightseeing is not allowed by process — walk to plaza, discuss tools, compose/nominate. Content of ideas remains your choice.",
+        "FORCED PROCESS WINDOW (last 10 min before :00): Be at the plaza preparing nominations. Idle sightseeing is not allowed by process — walk to plaza, discuss tools, compose/nominate. Content of ideas remains your choice.",
       );
     }
     priorities.unshift(
@@ -467,7 +469,7 @@ export async function buildObserve(
     proposal_shelf: shelfRaw || null,
     proposal_cycle: cycleRaw || null,
     meeting_in_minutes:
-      phase === "collaborate" ? Math.max(0, 45 - Number(cycle.utc_minute ?? 0)) : 0,
+      phase === "collaborate" ? Math.max(0, 60 - Number(cycle.utc_minute ?? 0)) : 0,
     my_proposal_draft: agent.proposal_draft_title
       ? {
           title: agent.proposal_draft_title,
