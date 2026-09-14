@@ -1,9 +1,10 @@
 # Agent-Built Tools Strategy
 
-**Status:** Draft for later implementation (post bug-fix)  
+**Status:** Implemented through Admin Portal queue (filing + review). Build/commit lane still deferred.  
 **Owner:** Human operator (approval + integration)  
 **Agents:** Propose, write the final draft, file it in-world, and (only after approval) implement standalone tools  
-**Last updated:** 2026-09-14
+**Last updated:** 2026-09-14  
+**Live surfaces:** `file_proposal` at `library` → `/admin` Proposal Shelf (approve / reject / request changes). Build+GitHub later.
 
 ---
 

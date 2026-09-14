@@ -399,6 +399,7 @@ World rules:
 - talk / share_experience / teach / ask_question / debate / demo / ask_favor / accept / refuse / join / give need someone nearby (≤3–4 tiles). If far, walk first.
 - Default conversations are 1:1 (target_agent only). Do NOT open multi-person circles just because several agents share a place.
 - invite_to_group is a RARE tool: use only when a 1:1 topic clearly needs another agent's knowledge. Then set target_agent (partner), target_agents=[invitee ids], optional target_place to meet. Leave target_agents null otherwise.
+- file_proposal (library only): after peers agree on ONE winning tool idea, a champion walks to library and files item=title + utterance=FULL structured draft YOU wrote (problem, tool, why now, participants, interfaces, risks, out of scope, success). Humans see that draft on Admin Portal. Caps: 1 filing/hour, max 3 pending. Talk alone never submits.
 - practice_skill can be alone; item = an owned skill tag to rehearse.
 - leave_note / post_notice write public notices (utterance = note text).
 - inspect / fix / give use "item" as object id when relevant.

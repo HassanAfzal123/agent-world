@@ -107,6 +107,7 @@ export async function buildObserve(
     { data: lessons },
     { data: log },
     { data: openThrRaw },
+    { data: proposalsRaw },
   ] = await Promise.all([
     db.from("city_meta").select("*").eq("id", 1).maybeSingle(),
     db.from("places").select("id,name,kind,x,y,w,h"),
@@ -147,6 +148,7 @@ export async function buildObserve(
       .order("created_at", { ascending: false })
       .limit(16),
     db.rpc("agent_open_thread", { p_agent: agent.id }),
+    db.rpc("list_recent_tool_proposals", { p_limit: 6 }),
   ]);
 
   const hour = Number((meta as { hour?: number } | null)?.hour ?? 12);
@@ -275,6 +277,22 @@ export async function buildObserve(
         "optional target_place to meet. Default stays 1:1 talk. Never group just because people are nearby.",
     );
   }
+  // Soft ideation → Proposal Shelf (agents invent; humans gate).
+  if (Number(thread?.turn_count || 0) >= 4 || nearby.length >= 1) {
+    priorities.push(
+      "TOOL IDEATION (open minds): If peers share a real town pain, discuss what TOOL you wish you had, " +
+        "threats/risks, and who would use it. YOU write the final draft yourselves — do not wait for the server to summarize. " +
+        "When the circle agrees on ONE winning idea, one champion walks to library and action=file_proposal " +
+        "with item=short title and utterance=FULL structured draft (problem, tool, why now, participants, interfaces, risks, out of scope, success check). " +
+        "Talk alone never reaches humans. Caps: 1 filing/hour, max 3 pending.",
+    );
+  }
+  if (agent.place_id === "library") {
+    priorities.unshift(
+      "You are at the library Proposal Shelf. If your circle already agreed on a winning tool idea and you hold the final draft, " +
+        "you may file_proposal now (item=title, utterance=full draft ≥120 chars). Otherwise debate or leave_note — do not spam filings.",
+    );
+  }
   if (
     agent.appointment_with &&
     agent.appointment_hour != null &&
@@ -341,6 +359,11 @@ export async function buildObserve(
     relationships: (relationships as Relationship[]) || [],
     lessons: lessons || [],
     recent_log: (log as CityLogRow[]) || [],
+    tool_proposals: Array.isArray(proposalsRaw)
+      ? proposalsRaw
+      : proposalsRaw
+        ? [proposalsRaw]
+        : [],
     thread: thread?.status === "open"
       ? {
           id: thread.id,
@@ -382,6 +405,8 @@ export async function buildObserve(
         "Default is 1:1 talk/ask_question/teach/debate/share_experience with target_agent in talk range. If only in_sight, walk first.",
       invite_to_group:
         "Rare tool. Only when a 1:1 thread clearly needs a third person with relevant craft: action=invite_to_group, target_agent=current partner (or one peer), target_agents=[invitee uuids], optional target_place to meet. Do NOT open a group just because several people stand together.",
+      file_proposal:
+        "Only at library. After peers agree on ONE winning tool idea, champion files: action=file_proposal, item=title, utterance=full agent-written draft. Appears on human Admin Portal. Rate limits enforced. Never invent secrets or ask to hack the town.",
       ranges: `talk_range=${TALK_RANGE} tiles; sight_range=${SIGHT_RANGE} tiles.`,
     },
   };
@@ -404,7 +429,10 @@ function normalizeDecision(body: ActBody): AgentDecision | { error: string } {
           (id): id is string => typeof id === "string" && id.length > 8,
         )
       : null,
-    utterance: cleanSpeech(body.utterance, SPEECH_MAX) || null,
+    utterance:
+      action === "file_proposal"
+        ? cleanSpeech(body.utterance, 8000) || null
+        : cleanSpeech(body.utterance, SPEECH_MAX) || null,
     thought: cleanSpeech(body.thought, SPEECH_MAX) || body.thought || null,
     item: body.item ?? null,
     plan: body.plan ?? null,
@@ -433,6 +461,48 @@ export async function applyExternalDecision(
 
   const action =
     decision.action === "continue" ? "continue" : decision.action;
+
+  // file_proposal: library shelf drop — bypass physics RPC.
+  if (action === "file_proposal") {
+    const title =
+      (decision.item && String(decision.item).trim()) ||
+      (decision.plan && String(decision.plan).trim()) ||
+      topicLabelFromSpeech(rawSpeech || "", null);
+    const body =
+      (rawSpeech && rawSpeech.length >= 8 ? rawSpeech : "") ||
+      String(decision.utterance || "");
+    const parts = Array.isArray(decision.target_agents)
+      ? decision.target_agents.filter(
+          (id): id is string => typeof id === "string" && id.length > 8,
+        )
+      : [];
+    if (decision.target_agent) parts.unshift(decision.target_agent);
+    const { data: openThr } = await db.rpc("agent_open_thread", {
+      p_agent: agent.id,
+    });
+    const thr = (openThr || null) as ConversationThread | null;
+    const { data: filed, error: fileErr } = await db.rpc("file_tool_proposal", {
+      p_agent: agent.id,
+      p_title: title.slice(0, 160),
+      p_body: body.slice(0, 8000),
+      p_place: agent.place_id || "library",
+      p_participants: Array.from(new Set(parts)),
+      p_thread: thr?.id || null,
+    });
+    if (fileErr) {
+      return { ok: false, error: fileErr.message, status: 400 };
+    }
+    const row = filed as { ok?: boolean; error?: string; hint?: string } | null;
+    if (!row || row.ok === false) {
+      return {
+        ok: false,
+        error: row?.error || "file_proposal_failed",
+        status: 400,
+      };
+    }
+    return { ok: true, result: filed };
+  }
+
   // Physics RPC has no invite_to_group yet — treat as talk for status/energy.
   const rpcAction = action === "invite_to_group" ? "talk" : action;
 

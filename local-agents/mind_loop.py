@@ -71,6 +71,7 @@ ALLOWED_ACTIONS = {
     "demo",
     "ask_favor",
     "invite_to_group",
+    "file_proposal",
 }
 
 
@@ -825,6 +826,49 @@ def _sanitize_decision(
             "thought": decision.get("thought") or "Inspecting something nearby.",
         }
 
+    if action == "file_proposal":
+        you = observe.get("you") if isinstance(observe.get("you"), dict) else {}
+        place = str(you.get("place_id") or "")
+        title = str(decision.get("item") or decision.get("plan") or "").strip()
+        draft = (utterance or "").strip()
+        if place != "library":
+            return {
+                "action": "walk",
+                "target_place": "library",
+                "target_agent": None,
+                "item": None,
+                "utterance": None,
+                "thought": "Need the library Proposal Shelf before filing a draft.",
+            }
+        if len(draft) < 120 or len(title) < 8:
+            return _solo_decision(
+                agent_name,
+                observe,
+                "file_proposal needs item=title and a full utterance draft (≥120 chars).",
+                system,
+                fps,
+            )
+        parts: list[str] = []
+        raw_parts = decision.get("target_agents")
+        if isinstance(raw_parts, list):
+            for x in raw_parts:
+                xid = str(x or "").strip()
+                if xid and xid != you_id:
+                    parts.append(xid)
+        peer = _resolve_peer(observe, decision.get("target_agent"))
+        out_fp: dict[str, Any] = {
+            "action": "file_proposal",
+            "target_place": "library",
+            "target_agent": peer,
+            "item": title[:160],
+            "utterance": draft[:8000],
+            "thought": decision.get("thought")
+            or "Filing our winning tool draft at the Proposal Shelf.",
+        }
+        if parts:
+            out_fp["target_agents"] = parts[:6]
+        return out_fp
+
     if action in SOCIAL_ACTIONS:
         peer = _resolve_peer(observe, decision.get("target_agent"))
         # Prefer a less-recent peer when several are nearby.
@@ -1326,6 +1370,18 @@ def decide_act(
                 'action=invite_to_group, target_agent=<partner uuid>, target_agents=["invitee_uuid"], '
                 "optional target_place to meet. Never open a group just because several people stand here."
             )
+        priorities.append(
+            "TOOL IDEATION: discuss tools you wish the town had; debate risks; YOU write the final draft. "
+            "When peers agree on ONE winning idea, champion walks to library and file_proposal "
+            "(item=title, utterance=full structured draft). Talk alone never reaches humans."
+        )
+        you = observe.get("you") if isinstance(observe.get("you"), dict) else {}
+        if you.get("place_id") == "library":
+            priorities.insert(
+                0,
+                "At library Proposal Shelf — if you hold an agreed winning draft, you may file_proposal now "
+                "(item=short title, utterance=full draft). Else keep debating; do not spam filings.",
+            )
         if random.random() < 0.55:
             seed = _hot_topic_seed(agent_name, observe.get("hour"))
             priorities.insert(
@@ -1352,10 +1408,10 @@ def decide_act(
         f"This is your world: you have wants, plans, opinions about the community, and "
         f"relationships. Choose ONE next beat as JSON only.\n"
         f"Schema: {{\"action\":\"walk|talk|ask_question|share_experience|teach|debate|"
-        f"practice_skill|reflect|work|inspect|eat|rest|idle|leave_note|invite_to_group\","
+        f"practice_skill|reflect|work|inspect|eat|rest|idle|leave_note|invite_to_group|file_proposal\","
         f"\"target_place\":null_or_place_id,\"target_agent\":null_or_uuid,"
         f"\"target_agents\":null_or_array_of_invitee_uuids,"
-        f"\"item\":null_or_object_id,\"utterance\":null_or_speech,\"thought\":\"private why\"}}\n\n"
+        f"\"item\":null_or_object_id_or_proposal_title,\"utterance\":null_or_speech,\"thought\":\"private why\"}}\n\n"
         f"HARD RULES:\n"
         f"- Speech must sound like a real conversation between neighbors — specific, "
         f"forward-moving, maybe funny or blunt. Propose plans, ask favors, share news, "
@@ -1364,6 +1420,8 @@ def decide_act(
         f"- Default is 1:1 talk (one target_agent). Leave target_agents null.\n"
         f"- invite_to_group is RARE: only when a 1:1 clearly needs another agent's knowledge; "
         f"then set target_agents to that invitee (and optional target_place to meet).\n"
+        f"- file_proposal only at library after peers pick ONE winning tool idea; "
+        f"item=title, utterance=FULL draft you wrote (not a one-liner).\n"
         f"- Invent the subject yourself. Banned stale clusters: {banned or ['(none yet)']}.\n"
         f"- Forbidden: greetings-only, 'how are you', 'You are …' dumps, 'open stage — on', "
         f"'craft take', recycled metaphor seminars about roles/tools/seasons/spaces.\n"
