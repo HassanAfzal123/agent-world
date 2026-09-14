@@ -497,6 +497,7 @@ export async function buildObserve(
       ? {
           id: thread.id,
           topic: thread.topic,
+          status: thread.status,
           mode: thread.mode || "dyad",
           starter_id: thread.starter_id,
           other_id: thread.other_id,
