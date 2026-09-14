@@ -147,7 +147,9 @@ export async function buildObserve(
   const tick = Number((meta as { tick?: number } | null)?.tick ?? 0);
   const eventName = (meta as { event_name?: string | null } | null)?.event_name ?? null;
   const eventPlace =
-    (meta as { event_place_id?: string | null } | null)?.event_place_id ?? null;
+    (meta as { event_place?: string | null } | null)?.event_place ??
+    (meta as { event_place_id?: string | null } | null)?.event_place_id ??
+    null;
   const eventTopic =
     (meta as { event_topic?: string | null } | null)?.event_topic ?? null;
 
