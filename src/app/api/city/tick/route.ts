@@ -342,36 +342,45 @@ export async function POST(req: Request) {
             : null;
 
         // Structure-only forces (walk). Speech comes from open minds (LLM).
-        // Hourly tool gather beats open-stage / council / appointments — every agent reports.
+        // Hourly tool gather beats open-stage / council / appointments / pending answers
+        // until the agent is at plaza — every agent reports.
         const forcedAnswer = forceAnswerDecision(
           agent,
           allLlm,
           dialoguePeerId,
         );
-        const forcedProposalPrep = forcedAnswer
+        const forcedProposalPrep = forceProposalPrepDecision(
+          agent,
+          cyclePhase,
+          cycleMinute,
+          cyclePlace,
+        );
+        const forcedProposalMeet = forcedProposalPrep
           ? null
-          : forceProposalPrepDecision(
-              agent,
-              cyclePhase,
-              cycleMinute,
-              cyclePlace,
-            );
-        const forcedProposalMeet =
-          forcedAnswer || forcedProposalPrep
-            ? null
-            : forceProposalMeetingDecision(agent, cyclePhase, cyclePlace);
+          : forceProposalMeetingDecision(agent, cyclePhase, cyclePlace);
         const forcedProposalFile =
-          forcedAnswer || forcedProposalPrep || forcedProposalMeet
+          forcedProposalPrep || forcedProposalMeet
             ? null
             : forceProposalFilingDecision(agent, cyclePhase, cycleChamp);
         const forcedProposal =
           forcedProposalPrep || forcedProposalMeet || forcedProposalFile;
+        // At plaza during gather, answering peers is fine; elsewhere, gather wins.
+        const forcedAnswerOk =
+          forcedAnswer &&
+          !(
+            forcedProposal &&
+            agent.place_id !== (cyclePlace || "plaza")
+          )
+            ? forcedAnswer
+            : forcedProposal
+              ? null
+              : forcedAnswer;
         const forcedAppt =
-          forcedAnswer || forcedProposal
+          forcedAnswerOk || forcedProposal
             ? null
             : forceAppointmentDecision(agent, allLlm, hour);
         const forcedCouncil =
-          forcedAnswer || forcedProposal || forcedAppt
+          forcedAnswerOk || forcedProposal || forcedAppt
             ? null
             : forceCouncilDecision(
                 agent,
@@ -381,11 +390,11 @@ export async function POST(req: Request) {
                 eventTopic,
               );
         const forcedAmbient =
-          forcedAnswer || forcedProposal || forcedAppt || forcedCouncil
+          forcedAnswerOk || forcedProposal || forcedAppt || forcedCouncil
             ? null
             : forceEventGatherDecision(agent, allLlm, eventName, eventPlace);
         const forcedSociety =
-          forcedAnswer ||
+          forcedAnswerOk ||
           forcedProposal ||
           forcedAppt ||
           forcedCouncil ||
