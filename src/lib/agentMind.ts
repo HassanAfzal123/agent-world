@@ -879,7 +879,10 @@ export async function applyExternalDecision(
       new Set(
         [...explicitInvitees, socialPeer].filter(
           (id): id is string =>
-            Boolean(id) && id !== agent.id && samePlaceIds.has(id),
+            typeof id === "string" &&
+            id.length > 8 &&
+            id !== agent.id &&
+            samePlaceIds.has(id),
         ),
       ),
     );
