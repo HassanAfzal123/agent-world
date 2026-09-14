@@ -31,6 +31,7 @@ import {
   forceProposalMeetingDecision,
   forceProposalPrepDecision,
   hauntWalkDecision,
+  inProposalPlazaGather,
   needsOpenMindSpeech,
   topicFromUtterance,
 } from "@/lib/society";
@@ -286,15 +287,43 @@ export async function POST(req: Request) {
         continue;
       }
 
-      // Connected agents bring their own LLM. The town hosts them; it does not
-      // puppet their minds with a server model.
+      // Connected agents bring their own LLM — but procedure gather still applies:
+      // during prep/meeting/voting, pull them to plaza (no speech puppeting).
       if (agent.origin === "connected" || agent.is_npc === false) {
-        results.push({
-          agent: agent.name,
-          decision: { action: "continue" },
-          connected: true,
-          note: "external_brain",
-        });
+        const gatherPlace = cyclePlace || "plaza";
+        const needGather = inProposalPlazaGather(cyclePhase, cycleMinute);
+        const atGather = agent.place_id === gatherPlace;
+        const walkingGather =
+          agent.status === "walking" && agent.target_place_id === gatherPlace;
+        if (needGather && !atGather && !walkingGather) {
+          const { data: walkData, error: walkErr } = await supabase.rpc(
+            "apply_agent_action",
+            {
+              p_agent_id: agent.id,
+              p_action: "walk",
+              p_target_place: gatherPlace,
+              p_target_agent: null,
+              p_utterance: null,
+              p_thought: `Forced process: hourly tool ${cyclePhase === "collaborate" ? "prep" : cyclePhase} outranks everything — report to ${gatherPlace}.`,
+              p_item: null,
+              p_plan: null,
+            },
+          );
+          results.push({
+            agent: agent.name,
+            decision: { action: "walk", target_place: gatherPlace },
+            connected: true,
+            note: "external_brain_gather_override",
+            result: walkErr ? { error: walkErr.message } : walkData,
+          });
+        } else {
+          results.push({
+            agent: agent.name,
+            decision: { action: "continue" },
+            connected: true,
+            note: "external_brain",
+          });
+        }
         continue;
       }
 

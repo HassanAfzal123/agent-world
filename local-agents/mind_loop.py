@@ -825,16 +825,28 @@ def _sanitize_decision(
 
     if utterance and _is_theme_clone(utterance, banned) and not must_answer:
         # Do not speak another remix of the same seminar — leave the thread.
-        # But never leave plaza during hourly tool gather windows.
-        if gather and at_meet:
-            utterance = None
-            decision = {
-                **decision,
-                "action": "idle",
-                "utterance": None,
-                "thought": "Rejected theme-clone speech — staying at plaza for the tool meeting.",
-            }
-            action = "idle"
+        # During tool gather: never wander off; go/stay at plaza.
+        if gather:
+            if at_meet:
+                utterance = None
+                decision = {
+                    **decision,
+                    "action": "idle",
+                    "utterance": None,
+                    "thought": "Rejected theme-clone speech — staying at plaza for the tool meeting.",
+                }
+                action = "idle"
+            else:
+                return {
+                    "action": "walk",
+                    "target_place": meet_place,
+                    "target_agent": None,
+                    "item": None,
+                    "utterance": None,
+                    "thought": (
+                        f"Rejected theme-clone — reporting to {meet_place} for hourly tool prep."
+                    )[:180],
+                }
         else:
             return _walk_elsewhere(
                 agent_name,
@@ -1707,6 +1719,33 @@ def decide_act(
     in_sight = [n for n in list(observe.get("in_sight") or []) if isinstance(n, dict)]
     random.shuffle(nearby)
 
+    # Hard gate: during prep/meeting/voting, plaza beats EVERYTHING
+    # (events, theme-breaks, pending answers elsewhere). Ideas stay free once gathered.
+    cycle_gate = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
+    phase_gate = str(cycle_gate.get("phase") or "")
+    utc_gate = int(cycle_gate.get("utc_minute") or 0)
+    meet_gate = str(cycle_gate.get("meeting_place") or "plaza")
+    tool_gate = phase_gate in ("meeting", "voting") or (
+        phase_gate == "collaborate" and 33 <= utc_gate < 41
+    )
+    at_gate = str(you.get("place_id") or "") == meet_gate
+    walking_to_gate = (
+        str(you.get("status") or "") == "walking"
+        and str(you.get("target_place_id") or "") == meet_gate
+    )
+    if tool_gate and not at_gate and not walking_to_gate:
+        return {
+            "action": "walk",
+            "target_place": meet_gate,
+            "target_agent": None,
+            "item": None,
+            "utterance": None,
+            "thought": (
+                f"Forced process: hourly tool {'prep' if phase_gate == 'collaborate' else phase_gate} "
+                f"outranks everything — report to {meet_gate} now."
+            )[:180],
+        }
+
     def _san(d: dict[str, Any]) -> dict[str, Any]:
         cleaned = _sanitize_decision(
             d, agent_name, system, observe, fps, banned, peers_hist
@@ -1716,8 +1755,20 @@ def decide_act(
         )
 
     addressed = _addressed_line(observe)
-    # Someone is waiting on us: answer THEIR words. Do not theme-ban or walk away.
+    # Someone is waiting on us: answer THEIR words — but only if already at plaza
+    # during tool gather (getting there still outranks remote chats).
     if waiting or pending:
+        if tool_gate and not at_gate:
+            return {
+                "action": "walk",
+                "target_place": meet_gate,
+                "target_agent": None,
+                "item": None,
+                "utterance": None,
+                "thought": (
+                    f"Forced process: answer after arriving at {meet_gate} for the tool cycle."
+                )[:180],
+            }
         if not addressed and isinstance(pending, dict) and pending.get("question"):
             pid = str(pending.get("from") or "") or (_resolve_peer(observe) or "")
             addressed = {
