@@ -729,7 +729,7 @@ def _sanitize_decision(
             agent_name, observe, f"Unknown action {action}.", system, fps
         )
 
-    # Forced process: EVERY agent to plaza for prep (:50-:59) / meeting / voting.
+    # Forced process: EVERY agent to plaza for prep (:10-:19) / meeting / voting.
     # Ideas stay free; location is not. Open stage and other walks lose.
     cycle_early = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
     phase_early = str(cycle_early.get("phase") or "")
@@ -738,7 +738,7 @@ def _sanitize_decision(
     meet_place = str(cycle_early.get("meeting_place") or "plaza")
     at_meet = str(you_early.get("place_id") or "") == meet_place
     gather = phase_early in ("meeting", "voting") or (
-        phase_early == "collaborate" and utc_early >= 50
+        phase_early == "collaborate" and 10 <= utc_early < 20
     )
     if gather:
         walk_target = str(decision.get("target_place") or "").strip()
@@ -1530,19 +1530,23 @@ def decide_act(
         cycle = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
         phase = str(cycle.get("phase") or "")
         utc_min = int(cycle.get("utc_minute") or 0)
-        mins_to_meeting = max(0, 60 - utc_min) if phase == "collaborate" else 0
+        mins_to_meeting = (
+            (max(0, 20 - utc_min) if utc_min < 20 else max(0, 60 - utc_min + 20))
+            if phase == "collaborate"
+            else 0
+        )
         you = observe.get("you") if isinstance(observe.get("you"), dict) else {}
         if phase == "collaborate":
             priorities.insert(
                 0,
-                f"REQUIRED PROCESS — tool meeting in {mins_to_meeting} min (plaza at UTC :00). "
+                f"REQUIRED PROCESS — tool meeting in {mins_to_meeting} min (plaza at UTC :20). "
                 "Ideas/topics/roles are YOURS. Process: gather, compose_proposal, nominate_idea. "
                 "Empty ballot = wasted hour.",
             )
             if mins_to_meeting <= 10:
                 priorities.insert(
                     0,
-                    "FORCED last-10-min prep before :00: walk to plaza if elsewhere; discuss tools; nominate. Do not idle sightseeing.",
+                    "FORCED last-10-min prep before :20: walk to plaza if elsewhere; discuss tools; nominate. Do not idle sightseeing.",
                 )
             if not observe.get("my_proposal_draft") and mins_to_meeting <= 20:
                 priorities.insert(

@@ -315,25 +315,29 @@ export async function buildObserve(
   );
   const noms = Array.isArray(cycle.nominations) ? cycle.nominations : [];
   const utcMin = Number(cycle.utc_minute ?? 0);
-  // Meeting at next UTC :00 during collaborate (mins 15–59); else 0.
+  // Meeting at UTC :20; during collaborate after :35, count to next hour's :20.
   const minsToMeeting =
-    phase === "collaborate" ? Math.max(0, 60 - utcMin) : 0;
+    phase === "collaborate"
+      ? utcMin < 20
+        ? Math.max(0, 20 - utcMin)
+        : Math.max(0, 60 - utcMin + 20)
+      : 0;
 
   // HARD PROCEDURE (ideas open; structure fixed) — hourly winning product cycle.
   priorities.unshift(
     `HOURLY WINNING-PRODUCT CYCLE (UTC hour ${cycle.hour_key || "?"}, phase=${phase}, minute=${utcMin}): ` +
-      "Procedure is fixed; IDEA CONTENT is yours. Meeting at UTC :00 each hour → vote → filer at library.",
+      "Procedure is fixed; IDEA CONTENT is yours. Meeting at UTC :20 each hour → vote → filer at library.",
   );
 
   if (phase === "collaborate") {
     priorities.unshift(
-      `PREPARE FOR THE HOURLY TOOL MEETING — ${minsToMeeting} minute(s) left until plaza meeting (UTC :00). ` +
+      `PREPARE FOR THE HOURLY TOOL MEETING — ${minsToMeeting} minute(s) left until plaza meeting (UTC :20). ` +
         "PROCESS is required; IDEAS are yours. Before the meeting: talk about a TOOL, optionally invite_to_group, compose_proposal, nominate_idea. " +
         "You decide the topic, who writes which section, and (later) who files.",
     );
     if (minsToMeeting <= 10) {
       priorities.unshift(
-        "FORCED PROCESS WINDOW (last 10 min before :00): Be at the plaza preparing nominations. Idle sightseeing is not allowed by process — walk to plaza, discuss tools, compose/nominate. Content of ideas remains your choice.",
+        "FORCED PROCESS WINDOW (last 10 min before :20): Be at the plaza preparing nominations. Idle sightseeing is not allowed by process — walk to plaza, discuss tools, compose/nominate. Content of ideas remains your choice.",
       );
     }
     priorities.unshift(
@@ -469,7 +473,12 @@ export async function buildObserve(
     proposal_shelf: shelfRaw || null,
     proposal_cycle: cycleRaw || null,
     meeting_in_minutes:
-      phase === "collaborate" ? Math.max(0, 60 - Number(cycle.utc_minute ?? 0)) : 0,
+      phase === "collaborate"
+        ? (() => {
+            const m = Number(cycle.utc_minute ?? 0);
+            return m < 20 ? Math.max(0, 20 - m) : Math.max(0, 60 - m + 20);
+          })()
+        : 0,
     my_proposal_draft: agent.proposal_draft_title
       ? {
           title: agent.proposal_draft_title,

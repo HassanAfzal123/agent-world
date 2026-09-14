@@ -253,11 +253,13 @@ export function inProposalPlazaGather(
   utcMinute: number | null | undefined,
 ): boolean {
   if (phase === "meeting" || phase === "voting") return true;
-  if (phase === "collaborate" && Number(utcMinute ?? 0) >= 50) return true;
+  const m = Number(utcMinute ?? 0);
+  // Prep window: :10-:19 before :20 meeting
+  if (phase === "collaborate" && m >= 10 && m < 20) return true;
   return false;
 }
 
-/** Late collaborate (last 10 min before next :00): every agent walks to plaza. */
+/** Collaborate :10-:19: every agent walks to plaza for pre-meeting prep. */
 export function forceProposalPrepDecision(
   agent: Agent,
   phase: string | null | undefined,
@@ -266,7 +268,7 @@ export function forceProposalPrepDecision(
 ): AgentDecision | null {
   if (phase !== "collaborate") return null;
   const m = Number(utcMinute ?? 0);
-  if (m < 50) return null; // minutes 50-59 = last 10 before :00 meeting
+  if (m < 10 || m >= 20) return null;
   const place = meetingPlace || "plaza";
   if (agent.place_id === place) return null;
   if (
@@ -279,7 +281,7 @@ export function forceProposalPrepDecision(
     action: "walk",
     target_place: place,
     thought:
-      "Forced process: pre-meeting tool prep — every agent reports to the plaza before the :00 UTC meeting (ideas are still ours).",
+      "Forced process: pre-meeting tool prep — every agent reports to the plaza before the :20 UTC meeting (ideas are still ours).",
     utterance: null,
     item: null,
   };
