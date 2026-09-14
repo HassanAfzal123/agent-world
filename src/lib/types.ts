@@ -72,6 +72,10 @@ export type Agent = {
   appointment_place?: string | null;
   appointment_hour?: number | null;
   appointment_note?: string | null;
+  /** Staged tool proposal document (compose_proposal) before library filing. */
+  proposal_draft_title?: string | null;
+  proposal_draft_body?: string | null;
+  proposal_draft_updated_at?: string | null;
   commit_action?: string | null;
   commit_detail?: string | null;
   commit_ticks?: number | null;

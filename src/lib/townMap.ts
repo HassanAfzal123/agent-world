@@ -133,6 +133,7 @@ export const ACTIONS = [
   "reflect",
   "ask_favor",
   "invite_to_group",
+  "compose_proposal",
   "file_proposal",
   "accept",
   "refuse",

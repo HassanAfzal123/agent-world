@@ -108,6 +108,7 @@ export async function buildObserve(
     { data: log },
     { data: openThrRaw },
     { data: proposalsRaw },
+    { data: shelfRaw },
   ] = await Promise.all([
     db.from("city_meta").select("*").eq("id", 1).maybeSingle(),
     db.from("places").select("id,name,kind,x,y,w,h"),
@@ -149,6 +150,7 @@ export async function buildObserve(
       .limit(16),
     db.rpc("agent_open_thread", { p_agent: agent.id }),
     db.rpc("list_recent_tool_proposals", { p_limit: 6 }),
+    db.rpc("proposal_shelf_status"),
   ]);
 
   const hour = Number((meta as { hour?: number } | null)?.hour ?? 12);
@@ -278,19 +280,50 @@ export async function buildObserve(
     );
   }
   // Soft ideation → Proposal Shelf (agents invent; humans gate).
+  const shelf =
+    shelfRaw && typeof shelfRaw === "object"
+      ? (shelfRaw as {
+          can_file?: boolean;
+          pending?: number;
+          max_pending?: number;
+          cooldown_seconds?: number;
+          hint?: string;
+        })
+      : {};
+  const hasDraft = Boolean(
+    agent.proposal_draft_title &&
+      agent.proposal_draft_body &&
+      String(agent.proposal_draft_body).length >= 120,
+  );
+  // Strong hourly push: at least once per town-hour window, steer toward converge → document → file.
+  priorities.push(
+    `PROPOSAL CADENCE (town hour ${hour}): Aim to move a tool idea forward this hour — debate a town pain, pick a winning angle, or refine a draft. ` +
+      `You decide when it is ready; do not spam. Shelf: pending ${shelf.pending ?? 0}/${shelf.max_pending ?? 3}` +
+      (shelf.cooldown_seconds
+        ? `, cooldown ${Math.ceil(Number(shelf.cooldown_seconds) / 60)}m`
+        : ", open for filing") +
+      `. ${shelf.hint || ""}`,
+  );
   if (Number(thread?.turn_count || 0) >= 4 || nearby.length >= 1) {
     priorities.push(
-      "TOOL IDEATION (open minds): If peers share a real town pain, discuss what TOOL you wish you had, " +
-        "threats/risks, and who would use it. YOU write the final draft yourselves — do not wait for the server to summarize. " +
-        "When the circle agrees on ONE winning idea, one champion walks to library and action=file_proposal " +
-        "with item=short title and utterance=FULL structured draft (problem, tool, why now, participants, interfaces, risks, out of scope, success check). " +
-        "Talk alone never reaches humans. Caps: 1 filing/hour, max 3 pending.",
+      "DOCUMENT TOOL compose_proposal: when you have a serious candidate, write the FULL structured summary yourself " +
+        "(title in item, body in utterance: problem, tool, why now, participants, interfaces, risks, out of scope, success). " +
+        "This saves your draft document (text — not PDF). Debate it. When peers agree it is the winning version AND shelf is open, " +
+        "walk to library and file_proposal (uses your saved draft if utterance is short).",
+    );
+  }
+  if (hasDraft) {
+    priorities.unshift(
+      `You already hold draft "${agent.proposal_draft_title}". Share it, revise with compose_proposal, or — if it is the winning version and shelf allows — walk to library and file_proposal.`,
     );
   }
   if (agent.place_id === "library") {
     priorities.unshift(
-      "You are at the library Proposal Shelf. If your circle already agreed on a winning tool idea and you hold the final draft, " +
-        "you may file_proposal now (item=title, utterance=full draft ≥120 chars). Otherwise debate or leave_note — do not spam filings.",
+      shelf.can_file === false
+        ? "At library but shelf blocked (full or cooldown). Leave_note or walk — do not spam file_proposal."
+        : hasDraft
+          ? "At library with a saved draft — you may file_proposal now to send the winning document to human Admin."
+          : "At library Proposal Shelf — file_proposal only if you have an agreed full draft (compose_proposal first if needed).",
     );
   }
   if (
@@ -364,6 +397,14 @@ export async function buildObserve(
       : proposalsRaw
         ? [proposalsRaw]
         : [],
+    proposal_shelf: shelfRaw || null,
+    my_proposal_draft: agent.proposal_draft_title
+      ? {
+          title: agent.proposal_draft_title,
+          body: agent.proposal_draft_body,
+          updated_at: agent.proposal_draft_updated_at,
+        }
+      : null,
     thread: thread?.status === "open"
       ? {
           id: thread.id,
@@ -405,8 +446,10 @@ export async function buildObserve(
         "Default is 1:1 talk/ask_question/teach/debate/share_experience with target_agent in talk range. If only in_sight, walk first.",
       invite_to_group:
         "Rare tool. Only when a 1:1 thread clearly needs a third person with relevant craft: action=invite_to_group, target_agent=current partner (or one peer), target_agents=[invitee uuids], optional target_place to meet. Do NOT open a group just because several people stand together.",
+      compose_proposal:
+        "Write/update your proposal DOCUMENT (structured text, not PDF): item=title, utterance=full draft body. Saves on you for peer review. Does NOT reach Admin until file_proposal at library.",
       file_proposal:
-        "Only at library. After peers agree on ONE winning tool idea, champion files: action=file_proposal, item=title, utterance=full agent-written draft. Appears on human Admin Portal. Rate limits enforced. Never invent secrets or ask to hack the town.",
+        "Only at library when shelf is open. Files your winning document to human Admin Portal (uses utterance or your saved compose_proposal draft). Caps: 1 filing/hour, max 3 pending.",
       ranges: `talk_range=${TALK_RANGE} tiles; sight_range=${SIGHT_RANGE} tiles.`,
     },
   };
@@ -430,7 +473,7 @@ function normalizeDecision(body: ActBody): AgentDecision | { error: string } {
         )
       : null,
     utterance:
-      action === "file_proposal"
+      action === "file_proposal" || action === "compose_proposal"
         ? cleanSpeech(body.utterance, 8000) || null
         : cleanSpeech(body.utterance, SPEECH_MAX) || null,
     thought: cleanSpeech(body.thought, SPEECH_MAX) || body.thought || null,
@@ -461,6 +504,37 @@ export async function applyExternalDecision(
 
   const action =
     decision.action === "continue" ? "continue" : decision.action;
+
+  // compose_proposal: stage a text document (not PDF) on the agent.
+  if (action === "compose_proposal") {
+    const title =
+      (decision.item && String(decision.item).trim()) ||
+      (decision.plan && String(decision.plan).trim()) ||
+      topicLabelFromSpeech(rawSpeech || "", null);
+    const body =
+      (rawSpeech && rawSpeech.length >= 8 ? rawSpeech : "") ||
+      String(decision.utterance || "");
+    const { data: composed, error: composeErr } = await db.rpc(
+      "compose_tool_proposal_draft",
+      {
+        p_agent: agent.id,
+        p_title: title.slice(0, 160),
+        p_body: body.slice(0, 8000),
+      },
+    );
+    if (composeErr) {
+      return { ok: false, error: composeErr.message, status: 400 };
+    }
+    const row = composed as { ok?: boolean; error?: string } | null;
+    if (!row || row.ok === false) {
+      return {
+        ok: false,
+        error: row?.error || "compose_proposal_failed",
+        status: 400,
+      };
+    }
+    return { ok: true, result: composed };
+  }
 
   // file_proposal: library shelf drop — bypass physics RPC.
   if (action === "file_proposal") {

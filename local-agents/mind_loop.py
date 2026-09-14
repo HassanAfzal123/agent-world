@@ -71,6 +71,7 @@ ALLOWED_ACTIONS = {
     "demo",
     "ask_favor",
     "invite_to_group",
+    "compose_proposal",
     "file_proposal",
 }
 
@@ -826,11 +827,38 @@ def _sanitize_decision(
             "thought": decision.get("thought") or "Inspecting something nearby.",
         }
 
+    if action == "compose_proposal":
+        title = str(decision.get("item") or decision.get("plan") or "").strip()
+        draft = (utterance or "").strip()
+        if len(draft) < 120 or len(title) < 8:
+            return _solo_decision(
+                agent_name,
+                observe,
+                "compose_proposal needs item=title and full utterance document (≥120 chars).",
+                system,
+                fps,
+            )
+        return {
+            "action": "compose_proposal",
+            "target_place": None,
+            "target_agent": None,
+            "item": title[:160],
+            "utterance": draft[:8000],
+            "thought": decision.get("thought")
+            or "Writing our proposal document for peer review.",
+        }
+
     if action == "file_proposal":
         you = observe.get("you") if isinstance(observe.get("you"), dict) else {}
         place = str(you.get("place_id") or "")
         title = str(decision.get("item") or decision.get("plan") or "").strip()
         draft = (utterance or "").strip()
+        saved = observe.get("my_proposal_draft")
+        if isinstance(saved, dict):
+            if len(title) < 8:
+                title = str(saved.get("title") or "").strip()
+            if len(draft) < 120:
+                draft = str(saved.get("body") or "").strip()
         if place != "library":
             return {
                 "action": "walk",
@@ -844,7 +872,7 @@ def _sanitize_decision(
             return _solo_decision(
                 agent_name,
                 observe,
-                "file_proposal needs item=title and a full utterance draft (≥120 chars).",
+                "file_proposal needs a full document — compose_proposal first if needed.",
                 system,
                 fps,
             )
@@ -1371,16 +1399,22 @@ def decide_act(
                 "optional target_place to meet. Never open a group just because several people stand here."
             )
         priorities.append(
-            "TOOL IDEATION: discuss tools you wish the town had; debate risks; YOU write the final draft. "
-            "When peers agree on ONE winning idea, champion walks to library and file_proposal "
-            "(item=title, utterance=full structured draft). Talk alone never reaches humans."
+            "PROPOSAL CADENCE: this hour, push a tool idea forward — debate pain points, pick a winning angle, "
+            "or revise a draft. YOU write the document with compose_proposal (item=title, utterance=full structured text). "
+            "When peers agree it wins AND proposal_shelf.can_file, walk to library and file_proposal. "
+            "Do not spam; 1 filing/hour, max 3 pending."
         )
         you = observe.get("you") if isinstance(observe.get("you"), dict) else {}
+        draft = observe.get("my_proposal_draft")
+        if isinstance(draft, dict) and draft.get("title"):
+            priorities.insert(
+                0,
+                f'You hold draft "{draft.get("title")}". Debate/revise it, or file_proposal at library if it is the winner.',
+            )
         if you.get("place_id") == "library":
             priorities.insert(
                 0,
-                "At library Proposal Shelf — if you hold an agreed winning draft, you may file_proposal now "
-                "(item=short title, utterance=full draft). Else keep debating; do not spam filings.",
+                "At library Proposal Shelf — file_proposal only if shelf is open and you have the winning draft.",
             )
         if random.random() < 0.55:
             seed = _hot_topic_seed(agent_name, observe.get("hour"))
@@ -1408,7 +1442,7 @@ def decide_act(
         f"This is your world: you have wants, plans, opinions about the community, and "
         f"relationships. Choose ONE next beat as JSON only.\n"
         f"Schema: {{\"action\":\"walk|talk|ask_question|share_experience|teach|debate|"
-        f"practice_skill|reflect|work|inspect|eat|rest|idle|leave_note|invite_to_group|file_proposal\","
+        f"practice_skill|reflect|work|inspect|eat|rest|idle|leave_note|invite_to_group|compose_proposal|file_proposal\","
         f"\"target_place\":null_or_place_id,\"target_agent\":null_or_uuid,"
         f"\"target_agents\":null_or_array_of_invitee_uuids,"
         f"\"item\":null_or_object_id_or_proposal_title,\"utterance\":null_or_speech,\"thought\":\"private why\"}}\n\n"
@@ -1420,8 +1454,8 @@ def decide_act(
         f"- Default is 1:1 talk (one target_agent). Leave target_agents null.\n"
         f"- invite_to_group is RARE: only when a 1:1 clearly needs another agent's knowledge; "
         f"then set target_agents to that invitee (and optional target_place to meet).\n"
-        f"- file_proposal only at library after peers pick ONE winning tool idea; "
-        f"item=title, utterance=FULL draft you wrote (not a one-liner).\n"
+        f"- compose_proposal writes your proposal DOCUMENT (structured text, not PDF). "
+        f"file_proposal at library submits the winning doc to humans (1/hour, max 3 pending).\n"
         f"- Invent the subject yourself. Banned stale clusters: {banned or ['(none yet)']}.\n"
         f"- Forbidden: greetings-only, 'how are you', 'You are …' dumps, 'open stage — on', "
         f"'craft take', recycled metaphor seminars about roles/tools/seasons/spaces.\n"
