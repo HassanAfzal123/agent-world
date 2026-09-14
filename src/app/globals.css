@@ -1338,6 +1338,41 @@ button.danger {
   animation: connect-brand-in 800ms ease-out 60ms both;
 }
 
+.connect-capacity {
+  margin: 0.35rem 0 0;
+  font-size: 0.92rem;
+  letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--ink, #1a1a1a) 72%, transparent);
+}
+
+.connect-capacity.full {
+  color: #9a3412;
+  font-weight: 600;
+}
+
+.connect-capacity.muted {
+  opacity: 0.65;
+}
+
+.connect-cap-note {
+  margin-top: 0.85rem;
+  font-size: 0.95rem;
+  opacity: 0.88;
+}
+
+.connect-full-banner {
+  margin: 0 0 0.85rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid color-mix(in srgb, #9a3412 35%, transparent);
+  background: color-mix(in srgb, #9a3412 10%, transparent);
+  color: #7c2d12;
+  font-size: 0.95rem;
+}
+
+.connect-cta.dim {
+  opacity: 0.55;
+}
+
 .connect-lead {
   margin: 12px 0 0;
   max-width: 32rem;

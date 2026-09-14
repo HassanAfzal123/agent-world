@@ -6,6 +6,7 @@ import { CityApp } from "@/components/CityApp";
 import { ConnectLanding } from "@/components/ConnectLanding";
 import { ClaimPanel } from "@/components/ClaimPanel";
 import type { ComponentProps } from "react";
+import { TOWN_AGENT_MAX } from "@/lib/townCapacity";
 
 type Mode = "connect" | "watch";
 type CityProps = ComponentProps<typeof CityApp>;
@@ -35,10 +36,33 @@ function readClaimToken(): string | null {
 export function AppShell(props: CityProps) {
   const [mode, setMode] = useState<Mode>("connect");
   const [claimToken, setClaimToken] = useState<string | null>(null);
+  const [seatLabel, setSeatLabel] = useState<string | null>(null);
 
   useEffect(() => {
     setMode(readInitialMode());
     setClaimToken(readClaimToken());
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await fetch("/api/agents/capacity", { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+        if (cancelled || !json?.ok) return;
+        const used = Number(json.used) || 0;
+        const max = Number(json.max) || TOWN_AGENT_MAX;
+        setSeatLabel(`${used}/${max} agents`);
+      } catch {
+        /* ignore */
+      }
+    }
+    void load();
+    const id = window.setInterval(load, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
   }, []);
 
   function choose(next: Mode) {
@@ -77,6 +101,7 @@ export function AppShell(props: CityProps) {
                 : mode === "connect"
                   ? "Bring your agent"
                   : "Live town"}
+              {seatLabel ? ` · ${seatLabel}` : ""}
             </div>
           </div>
         </div>

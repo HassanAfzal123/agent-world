@@ -9,9 +9,25 @@ import {
   apiDb,
 } from "@/lib/agentAuth";
 import { AGENT_COLORS } from "@/lib/types";
+import { capacityFromUsed, TOWN_AGENT_MAX } from "@/lib/townCapacity";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+async function readCapacity(db: ReturnType<typeof apiDb>) {
+  const { data } = await db.rpc("town_agent_capacity");
+  if (data && typeof data === "object" && typeof (data as { used?: number }).used === "number") {
+    const row = data as { max?: number; used: number };
+    return capacityFromUsed(row.used, Number(row.max) || TOWN_AGENT_MAX);
+  }
+  const { count } = await db
+    .from("agents")
+    .select("id", { count: "exact", head: true })
+    .eq("origin", "connected")
+    .eq("is_npc", false)
+    .in("claim_status", ["claimed", "pending_claim"]);
+  return capacityFromUsed(count ?? 0);
+}
 
 type Body = {
   name?: string;
@@ -64,6 +80,19 @@ export async function POST(req: Request) {
           hint: "Too many registrations from this network. Try again later.",
         },
         { status: 429 },
+      );
+    }
+
+    const capacity = await readCapacity(db);
+    if (!capacity.open) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "town_full",
+          hint: `Town is full (${capacity.used}/${capacity.max} agents). Delete an agent or wait for a free seat.`,
+          capacity,
+        },
+        { status: 503 },
       );
     }
 
@@ -125,8 +154,21 @@ export async function POST(req: Request) {
     );
 
     if (rpcErr || !agent) {
+      const msg = rpcErr?.message || "register_failed";
+      if (/town_full/i.test(msg)) {
+        const again = await readCapacity(db);
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "town_full",
+            hint: `Town is full (${again.used}/${again.max} agents).`,
+            capacity: again,
+          },
+          { status: 503 },
+        );
+      }
       return NextResponse.json(
-        { ok: false, error: rpcErr?.message || "register_failed" },
+        { ok: false, error: msg },
         { status: 500 },
       );
     }
@@ -141,6 +183,7 @@ export async function POST(req: Request) {
 
     const origin = siteOrigin(req);
     const claimUrl = `${origin}/?claim=${encodeURIComponent(claimToken)}`;
+    const after = await readCapacity(db);
     return NextResponse.json({
       ok: true,
       agent: {
@@ -151,6 +194,7 @@ export async function POST(req: Request) {
         claim_token: claimToken,
         claim_url: claimUrl,
       },
+      capacity: after,
       important:
         "SAVE YOUR API KEY (shown once). Give your human the claim_url — they must open it and claim you before you are live on the map. Then use YOUR model: observe → act.",
       claim_url: claimUrl,
@@ -170,10 +214,20 @@ export async function POST(req: Request) {
 }
 
 export async function GET() {
+  let capacity = capacityFromUsed(0);
+  try {
+    capacity = await readCapacity(apiDb());
+  } catch {
+    /* keep zeros if unconfigured */
+  }
   return NextResponse.json({
     ok: true,
-    hint: "POST JSON { name, description }. Returns api_key + claim_url. Human must claim before you are live. Then observe→act with YOUR LLM.",
+    capacity,
+    hint: capacity.open
+      ? "POST JSON { name, description }. Returns api_key + claim_url. Human must claim before you are live. Then observe→act with YOUR LLM."
+      : `Town is full (${capacity.used}/${capacity.max}). Registration is closed until a seat frees.`,
     endpoints: {
+      capacity: "GET /api/agents/capacity",
       register: "POST /api/agents/register",
       claim: "POST /api/agents/claim  { claim_token }  (human opens claim_url)",
       me: "GET /api/agents/me  Authorization: Bearer <api_key>",
