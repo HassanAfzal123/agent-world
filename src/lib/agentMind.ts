@@ -314,14 +314,22 @@ export async function buildObserve(
       String(agent.proposal_draft_body).length >= 120,
   );
   const noms = Array.isArray(cycle.nominations) ? cycle.nominations : [];
+  const utcMin = Number(cycle.utc_minute ?? 0);
+  const minsToMeeting = Math.max(0, 45 - utcMin);
 
   // HARD PROCEDURE (ideas open; structure fixed) — hourly winning product cycle.
   priorities.unshift(
-    `HOURLY WINNING-PRODUCT CYCLE (UTC hour ${cycle.hour_key || "?"}, phase=${phase}, minute=${cycle.utc_minute ?? "?"}): ` +
+    `HOURLY WINNING-PRODUCT CYCLE (UTC hour ${cycle.hour_key || "?"}, phase=${phase}, minute=${utcMin}): ` +
       "Procedure is fixed; IDEA CONTENT is yours. collaborate→invite groups→compose drafts→nominate→meeting→vote→random champion files at library.",
   );
 
   if (phase === "collaborate") {
+    priorities.unshift(
+      `PREPARE FOR THE HOURLY TOOL MEETING — ${minsToMeeting} minute(s) left until plaza meeting (UTC :45). ` +
+        "This is REQUIRED town work, not optional chat. Before the meeting you should: (1) talk with peers about a TOOL the town needs, " +
+        "(2) invite_to_group if the idea needs more minds, (3) compose_proposal with a real structured draft, (4) nominate_idea so your idea is on the ballot. " +
+        "Hot-topic banter alone is not enough — bring a concrete tool nomination.",
+    );
     priorities.unshift(
       "PHASE collaborate: Discuss town pains and tools. If a 1:1 idea should become a winning product, use invite_to_group to pull in others and draft together. " +
         "Write the document with compose_proposal. When ready, nominate_idea (item=title, utterance=summary). Do NOT file yet.",
@@ -329,6 +337,16 @@ export async function buildObserve(
     if (nearby.length >= 1 && Number(thread?.turn_count || 0) >= 2) {
       priorities.push(
         "If this thread's idea is strong enough to explore as a town tool, invite_to_group a third peer who has relevant craft — collaborate, don't spam groups for chitchat.",
+      );
+    }
+    if (!hasDraft && minsToMeeting <= 20) {
+      priorities.unshift(
+        "URGENT: You still have no proposal draft and the meeting is soon. Prefer talk/ask about a buildable town tool, then compose_proposal this beat or next.",
+      );
+    }
+    if (!noms.length && minsToMeeting <= 25) {
+      priorities.push(
+        "No nominations on the ballot yet this hour — your town needs at least one nominate_idea before voting or the cycle closes empty.",
       );
     }
   } else if (phase === "meeting") {
@@ -444,6 +462,8 @@ export async function buildObserve(
         : [],
     proposal_shelf: shelfRaw || null,
     proposal_cycle: cycleRaw || null,
+    meeting_in_minutes:
+      phase === "collaborate" ? Math.max(0, 45 - Number(cycle.utc_minute ?? 0)) : 0,
     my_proposal_draft: agent.proposal_draft_title
       ? {
           title: agent.proposal_draft_title,
