@@ -868,7 +868,9 @@ def _sanitize_decision(
                     f"At {meet_place} for hourly tool {phase_early if phase_early != 'collaborate' else 'prep'} — "
                     "invite_to_group, co-write a DETAILED draft, nominate as a group; do not leave."
                 ),
-                "_force_compose": False,
+                # Meeting with empty ballot: push compose next, don't idle forever.
+                "_force_compose": phase_early == "meeting"
+                or (phase_early == "collaborate" and 38 <= utc_early < 41),
                 "_force_group": phase_early == "collaborate",
             }
 
@@ -1438,7 +1440,27 @@ def _maybe_force_prep_compose(
     expand_file = bool(decision.pop("_expand_file", None))
     action = str(decision.get("action") or "")
 
-    # Voting: must cast vote_idea when ballot has noms.
+    # Voting: empty ballot → salvage nominate/compose; else cast vote.
+    if phase == "voting" and not noms:
+        if has_detail and in_group and group_turns >= 4:
+            return {
+                "action": "nominate_idea",
+                "target_place": None,
+                "target_agent": None,
+                "item": str(draft.get("title"))[:160],
+                "utterance": draft_body[:8000],
+                "thought": "Empty ballot in voting — nominating the group draft before the hour dies.",
+            }
+        if in_group and group_turns >= 4 and not has_detail:
+            return _llm_expand_compose(
+                ollama,
+                model,
+                agent_name,
+                system,
+                observe,
+                seed_title=str(decision.get("item") or draft.get("title") or "") or None,
+                seed_body=str(decision.get("utterance") or draft_body or "") or None,
+            )
     if phase == "voting" and noms and action != "vote_idea":
         nom = noms[0] if isinstance(noms[0], dict) else {}
         nid = str(nom.get("id") or "")
@@ -1542,20 +1564,37 @@ def _maybe_force_prep_compose(
                         "thought": "Helping flesh out the detailed filing report.",
                     }
 
-    # Prep / empty meeting: group first, then detailed draft — not solo compose spam.
+    # Prep / empty meeting / empty early voting: group → compose → nominate.
     meeting_empty = phase == "meeting" and not noms
-    if not (prep or meeting_empty):
+    voting_empty = phase == "voting" and not noms
+    if not (prep or meeting_empty or voting_empty):
         return decision
     if not at_meet and phase != "filing":
+        # Late salvage: if draft+group ready, nominate even mid-walk.
+        if (
+            (meeting_empty or voting_empty)
+            and has_detail
+            and in_group
+            and group_turns >= 4
+        ):
+            return {
+                "action": "nominate_idea",
+                "target_place": None,
+                "target_agent": None,
+                "item": str(draft.get("title"))[:160],
+                "utterance": draft_body[:8000],
+                "thought": "Nominating group draft even while relocating — ballot is empty.",
+            }
         return decision
 
     if not in_group or group_size < 3:
-        # Only invite agents who are HERE — remote thread partners make the
-        # server too_far→walk and never open a group.
+        # Only invite agents who share THIS place — server requires same place_id.
         nearby_here = [
             n
             for n in (observe.get("nearby") or [])
-            if isinstance(n, dict) and str(n.get("id") or "") not in ("", you_id)
+            if isinstance(n, dict)
+            and str(n.get("id") or "") not in ("", you_id)
+            and str(n.get("place_id") or "") == meet
         ]
         if len(nearby_here) >= 2:
             peer_row = nearby_here[0]
@@ -1580,7 +1619,16 @@ def _maybe_force_prep_compose(
                     "utterance": line,
                     "thought": "Forced process: open a tool group before nominating.",
                 }
-            return decision
+            # Speech failed — still force the invite action with a minimal non-template line.
+            return {
+                "action": "invite_to_group",
+                "target_agent": peer,
+                "target_agents": invitees,
+                "target_place": meet,
+                "item": None,
+                "utterance": f"Join me — let's draft this hour's tool together at the {meet}.",
+                "thought": "Forced process: open a tool group before nominating.",
+            }
         if len(nearby_here) == 1:
             peer_row = nearby_here[0]
             peer = str(peer_row.get("id"))
@@ -1604,8 +1652,15 @@ def _maybe_force_prep_compose(
                 }
         return decision
 
-    # In group: discuss until enough turns, then detailed compose, then nominate.
-    if group_turns < 4 and action not in ("talk", "ask_question", "debate", "share_experience", "compose_proposal"):
+    # In group: a few turns of talk, then ALWAYS compose if thin, then nominate.
+    if group_turns < 4 and action not in (
+        "talk",
+        "ask_question",
+        "debate",
+        "share_experience",
+        "compose_proposal",
+        "nominate_idea",
+    ):
         peer = _resolve_peer(observe) or (str(parts[0]) if parts else None)
         if peer and peer != you_id:
             peer_row = next(
@@ -1623,8 +1678,8 @@ def _maybe_force_prep_compose(
                 system,
                 observe,
                 intent=(
-                    "push the group draft forward: name a concrete town pain, a design choice, "
-                    "or who writes which section — work it now, do not schedule later"
+                    "push the group draft forward: name a concrete tech/community tool, "
+                    "a design choice, or who writes which section — work it now"
                 ),
                 peer_name=str(peer_row.get("name") or "friend"),
             )
@@ -1638,21 +1693,32 @@ def _maybe_force_prep_compose(
                     "thought": "Group must discuss before composing/nominating.",
                 }
 
-    if has_detail and meeting_empty and group_turns >= 4:
-        return {
-            "action": "nominate_idea",
-            "target_place": None,
-            "target_agent": None,
-            "item": str(draft.get("title"))[:160],
-            "utterance": draft_body[:8000],
-            "thought": "Group draft is detailed enough — nominating for the vote.",
-        }
+    if in_group and group_size >= 3 and group_turns >= 4:
+        if not has_detail or expand:
+            return _llm_expand_compose(
+                ollama,
+                model,
+                agent_name,
+                system,
+                observe,
+                seed_title=str(decision.get("item") or draft.get("title") or "") or None,
+                seed_body=str(decision.get("utterance") or draft_body or "") or None,
+            )
+        if meeting_empty or voting_empty or (prep and utc_min >= 38 and not noms):
+            return {
+                "action": "nominate_idea",
+                "target_place": None,
+                "target_agent": None,
+                "item": str(draft.get("title"))[:160],
+                "utterance": draft_body[:8000],
+                "thought": "Group draft is detailed enough — nominating for the vote.",
+            }
 
     if (
         expand
         or action in ("idle", "reflect", "work", "rest", "eat", "inspect")
         or (action == "compose_proposal" and len(str(decision.get("utterance") or "")) < 400)
-        or (prep and in_group and group_turns >= 3 and not has_detail)
+        or (in_group and group_turns >= 3 and not has_detail)
     ):
         return _llm_expand_compose(
             ollama,

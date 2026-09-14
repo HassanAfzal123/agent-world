@@ -1,9 +1,9 @@
 /** Town Hall Meeting cycle helpers (UTC schedule mirrors DB `_proposal_phase_for_minute`). */
 
 export const TOWN_HALL_MEETING_MINUTE = 41;
-export const TOWN_HALL_VOTING_MINUTE = 47;
-export const TOWN_HALL_FILING_MINUTE = 50;
-export const TOWN_HALL_COLLAB_RESUME_MINUTE = 53;
+export const TOWN_HALL_VOTING_MINUTE = 49;
+export const TOWN_HALL_FILING_MINUTE = 52;
+export const TOWN_HALL_COLLAB_RESUME_MINUTE = 55;
 
 export type TownHallNomination = {
   id: string;

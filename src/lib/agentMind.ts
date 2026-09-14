@@ -372,13 +372,17 @@ export async function buildObserve(
     }
   } else if (phase === "meeting") {
     priorities.unshift(
-      `PHASE meeting (gather at ${cycle.meeting_place || "plaza"}): Report GROUP nominations only. If you lack a group draft, invite_to_group and finish a detailed document before nominate_idea.`,
+      `PHASE meeting (gather at ${cycle.meeting_place || "plaza"}): After a few group turns, compose_proposal (≥400 chars) then nominate_idea. Do not keep chatting without nominating.`,
     );
   } else if (phase === "voting") {
-    priorities.unshift(
-      `PHASE voting: REQUIRED cast vote_idea (item=<nomination uuid>). Then discuss who files via appoint_filer. After the winner lands, help shape the DETAILED filing report.`,
-    );
-    if (noms.length) {
+    if (!noms.length) {
+      priorities.unshift(
+        "PHASE voting — BALLOT EMPTY: nominate_idea NOW with your detailed group draft (≥400 chars). Then vote.",
+      );
+    } else {
+      priorities.unshift(
+        `PHASE voting: REQUIRED cast vote_idea (item=<nomination uuid>). Then discuss who files via appoint_filer. After the winner lands, help shape the DETAILED filing report.`,
+      );
       priorities.push(
         `Nominations on the ballot (${noms.length}): use their id in item when voting.`,
       );
@@ -543,7 +547,7 @@ export async function buildObserve(
       compose_proposal:
         "Write/update your proposal DOCUMENT (structured text, not PDF): item=title, utterance=full draft body. Saves on you for peer review.",
       nominate_idea:
-        "During collaborate/meeting: put your idea on this hour's ballot. item=title, utterance=summary (>=80 chars). Uses saved draft if needed.",
+        "During collaborate/meeting (or early voting if ballot empty): put your idea on this hour's ballot. item=title, utterance=DETAILED summary (≥400 chars). Uses saved draft if needed.",
       vote_idea:
         "During meeting/voting: item=<nomination uuid> from proposal_cycle.nominations. YOU choose the winner.",
       appoint_filer:

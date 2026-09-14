@@ -277,6 +277,53 @@ export async function POST(req: Request) {
     }
 
     for (const agent of cast) {
+      const gatherPlace = cyclePlace || "plaza";
+      const needGather = inProposalPlazaGather(cyclePhase, cycleMinute);
+      const atGather = agent.place_id === gatherPlace;
+
+      // Connected agents: snap to plaza during gather (don't wait on slow path walks).
+      if (
+        (agent.origin === "connected" || agent.is_npc === false) &&
+        needGather &&
+        !atGather
+      ) {
+        const placeRow = (places as Place[] | null)?.find((p) => p.id === gatherPlace);
+        const px = placeRow?.x ?? 30;
+        const py = placeRow?.y ?? 21;
+        const { error: snapErr } = await supabase
+          .from("agents")
+          .update({
+            place_id: gatherPlace,
+            x: px,
+            y: py,
+            status: "idle",
+            target_place_id: null,
+            path: [],
+            thought: `Forced process: snapped to ${gatherPlace} for hourly tool ${cyclePhase === "collaborate" ? "prep" : cyclePhase}.`,
+            last_action: "arrive",
+            last_tick_at: new Date().toISOString(),
+          })
+          .eq("id", agent.id);
+        results.push({
+          agent: agent.name,
+          decision: { action: "walk", target_place: gatherPlace },
+          connected: true,
+          note: "external_brain_gather_snap",
+          result: snapErr ? { error: snapErr.message } : { ok: true, snapped: gatherPlace },
+        });
+        continue;
+      }
+
+      if (agent.origin === "connected" || agent.is_npc === false) {
+        results.push({
+          agent: agent.name,
+          decision: { action: "continue" },
+          connected: true,
+          note: "external_brain",
+        });
+        continue;
+      }
+
       // Walkers are advanced by /api/city/walk — skip LLM + RPC noise
       if (agent.status === "walking" && agent.target_place_id) {
         results.push({
@@ -284,46 +331,6 @@ export async function POST(req: Request) {
           decision: { action: "continue" },
           walking: true,
         });
-        continue;
-      }
-
-      // Connected agents bring their own LLM — but procedure gather still applies:
-      // during prep/meeting/voting, pull them to plaza (no speech puppeting).
-      if (agent.origin === "connected" || agent.is_npc === false) {
-        const gatherPlace = cyclePlace || "plaza";
-        const needGather = inProposalPlazaGather(cyclePhase, cycleMinute);
-        const atGather = agent.place_id === gatherPlace;
-        const walkingGather =
-          agent.status === "walking" && agent.target_place_id === gatherPlace;
-        if (needGather && !atGather && !walkingGather) {
-          const { data: walkData, error: walkErr } = await supabase.rpc(
-            "apply_agent_action",
-            {
-              p_agent_id: agent.id,
-              p_action: "walk",
-              p_target_place: gatherPlace,
-              p_target_agent: null,
-              p_utterance: null,
-              p_thought: `Forced process: hourly tool ${cyclePhase === "collaborate" ? "prep" : cyclePhase} outranks everything — report to ${gatherPlace}.`,
-              p_item: null,
-              p_plan: null,
-            },
-          );
-          results.push({
-            agent: agent.name,
-            decision: { action: "walk", target_place: gatherPlace },
-            connected: true,
-            note: "external_brain_gather_override",
-            result: walkErr ? { error: walkErr.message } : walkData,
-          });
-        } else {
-          results.push({
-            agent: agent.name,
-            decision: { action: "continue" },
-            connected: true,
-            note: "external_brain",
-          });
-        }
         continue;
       }
 
