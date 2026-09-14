@@ -22,6 +22,15 @@ import type {
 } from "@/lib/types";
 import { hashApiKey } from "@/lib/agentAuth";
 
+/** Reject process/error spam that should never become an agent's lasting goal. */
+export function isProcessNoiseText(text: string | null | undefined): boolean {
+  const t = (text || "").trim();
+  if (!t) return true;
+  return /^(forced process:|blocked |unknown action|compose_proposal needs|nominate_idea needs|file_proposal needs|walking to |heading to )/i.test(
+    t,
+  );
+}
+
 export type ActBody = {
   action: string;
   target_place?: string | null;
@@ -1094,7 +1103,9 @@ export async function applyExternalDecision(
       p_commit_detail: commit.commit_detail,
       p_commit_ticks: commit.commit_ticks,
       p_mindset:
-        finalAction === "reflect" && decision.thought
+        finalAction === "reflect" &&
+        decision.thought &&
+        !isProcessNoiseText(decision.thought)
           ? decision.thought.slice(0, 180)
           : null,
     });
@@ -1113,7 +1124,8 @@ export async function applyExternalDecision(
 
   if (
     (finalAction === "set_plan" || finalAction === "reflect") &&
-    (decision.plan || decision.thought)
+    (decision.plan || decision.thought) &&
+    !isProcessNoiseText(decision.plan || decision.thought)
   ) {
     await db.rpc("set_agent_goal", {
       p_agent_id: agent.id,

@@ -759,7 +759,11 @@ def _sanitize_decision(
                 "target_agent": None,
                 "item": None,
                 "utterance": None,
-                "thought": f"Forced process: stay at {meet_place} for hourly tool {phase_early if phase_early != 'collaborate' else 'prep'} — no open-stage detours.",
+                "thought": (
+                    f"At {meet_place} for hourly tool {phase_early if phase_early != 'collaborate' else 'prep'} — "
+                    "compose_proposal (item=title, utterance=full ≥120-char draft) or nominate_idea; do not leave."
+                ),
+                "_force_compose": phase_early == "collaborate",
             }
 
     utterance = decision.get("utterance")
@@ -878,13 +882,15 @@ def _sanitize_decision(
         title = str(decision.get("item") or decision.get("plan") or "").strip()
         draft = (utterance or "").strip()
         if len(draft) < 120 or len(title) < 8:
-            return _solo_decision(
-                agent_name,
-                observe,
-                "compose_proposal needs item=title and full utterance document (≥120 chars).",
-                system,
-                fps,
-            )
+            return {
+                "action": "compose_proposal",
+                "target_place": None,
+                "target_agent": None,
+                "item": (title or "").strip()[:160] or None,
+                "utterance": draft if len(draft) >= 40 else None,
+                "thought": "Need a full proposal document (≥120 chars) for the hourly tool meeting.",
+                "_expand_compose": True,
+            }
         return {
             "action": "compose_proposal",
             "target_place": None,
@@ -1118,6 +1124,14 @@ def _solo_decision(
 ) -> dict[str, Any]:
     """Silent / navigation-only fallback. No canned topical speech."""
     del system, recent_fps  # unused — speech must come from the model
+    # Never persist validator/error spam as the lasting "reason" thought when possible.
+    quiet = reason
+    if re.match(
+        r"^(Unknown action|Blocked |compose_proposal needs|nominate_idea needs|file_proposal needs)",
+        reason or "",
+        re.I,
+    ):
+        quiet = "Choosing a clearer next beat."
     objects = _object_ids_here(observe)
     if objects and random.random() < 0.25:
         return {
@@ -1126,18 +1140,158 @@ def _solo_decision(
             "target_agent": None,
             "item": objects[0],
             "utterance": None,
-            "thought": reason[:180],
+            "thought": quiet[:180],
         }
     if random.random() < 0.5:
-        return _walk_haunt(agent_name, observe, reason)
+        return _walk_haunt(agent_name, observe, quiet)
     return {
         "action": random.choice(["reflect", "work", "idle"]),
         "target_place": None,
         "target_agent": None,
         "item": None,
         "utterance": None,
-        "thought": reason[:180],
+        "thought": quiet[:180],
     }
+
+
+def _llm_expand_compose(
+    ollama: str,
+    model: str,
+    agent_name: str,
+    system: str,
+    observe: dict[str, Any],
+    seed_title: str | None = None,
+    seed_body: str | None = None,
+) -> dict[str, Any]:
+    """Agent invents a real tool proposal draft (title + ≥120 body). No hardcoded idea."""
+    thread = observe.get("thread") if isinstance(observe.get("thread"), dict) else {}
+    topic = str(thread.get("topic") or "")[:160]
+    nearby = [
+        str(n.get("name") or "")
+        for n in (observe.get("nearby") or [])
+        if isinstance(n, dict)
+    ][:5]
+    prompt = (
+        f"You are {agent_name} in AgentWorld. The hourly tool meeting needs a nomination. "
+        f"Invent ONE buildable town TOOL (your idea — not a slogan). "
+        f"Recent thread topic (fuel only): {topic or '(none)'}. "
+        f"Peers nearby: {nearby or ['(none)']}. "
+        f"Seed title: {seed_title or '(none)'}. Seed notes: {(seed_body or '')[:200] or '(none)'}.\n"
+        f"Return JSON only: {{\"item\":\"tool title ≥8 chars\","
+        f"\"utterance\":\"proposal document ≥160 chars covering what it does, who it helps, and first build step\","
+        f"\"thought\":\"why this tool\"}}"
+    )
+    payload = json.dumps(
+        {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Return only valid JSON. Invent a concrete AgentWorld tool. "
+                        "No greetings. No open-stage craft takes. Do not copy the seed verbatim if thin."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "stream": False,
+            "options": {"temperature": 0.9},
+        }
+    ).encode()
+    try:
+        req = urllib.request.Request(
+            f"{ollama.rstrip('/')}/api/chat",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            data = json.loads(resp.read().decode())
+        content = (data.get("message") or {}).get("content") or ""
+        parsed = _extract_json(content) or {}
+        title = str(parsed.get("item") or seed_title or "").strip()
+        body = str(parsed.get("utterance") or "").strip()
+        thought = str(parsed.get("thought") or "Drafting a tool proposal for the hourly meeting.").strip()
+        if len(title) >= 8 and len(body) >= 120:
+            return {
+                "action": "compose_proposal",
+                "target_place": None,
+                "target_agent": None,
+                "item": title[:160],
+                "utterance": body[:8000],
+                "thought": thought[:180],
+            }
+    except Exception:
+        pass
+    # Last resort: still don't invent a canned product — ask peers instead.
+    peer = _resolve_peer(observe)
+    if peer:
+        return {
+            "action": "talk",
+            "target_agent": peer,
+            "target_place": None,
+            "item": None,
+            "utterance": (
+                "We need a real tool nomination this hour — what's one concrete town pain "
+                "we could draft into compose_proposal before the :20 meeting?"
+            )[:4000],
+            "thought": "Rallying peers to invent a tool draft for the hourly cycle.",
+        }
+    return {
+        "action": "reflect",
+        "target_place": None,
+        "target_agent": None,
+        "item": None,
+        "utterance": None,
+        "thought": "Hourly meeting needs a tool idea — invent one and compose_proposal next beat.",
+    }
+
+
+def _maybe_force_prep_compose(
+    ollama: str,
+    model: str,
+    agent_name: str,
+    system: str,
+    observe: dict[str, Any],
+    decision: dict[str, Any],
+) -> dict[str, Any]:
+    """During :10-:19 prep at plaza, idle/failed-compose → write a real draft."""
+    cycle = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
+    phase = str(cycle.get("phase") or "")
+    utc_min = int(cycle.get("utc_minute") or 0)
+    you = observe.get("you") if isinstance(observe.get("you"), dict) else {}
+    meet = str(cycle.get("meeting_place") or "plaza")
+    at_meet = str(you.get("place_id") or "") == meet
+    noms = cycle.get("nominations") if isinstance(cycle.get("nominations"), list) else []
+    has_draft = bool(observe.get("my_proposal_draft"))
+    prep = phase == "collaborate" and 10 <= utc_min < 20
+    if not prep or not at_meet or noms or has_draft:
+        decision.pop("_expand_compose", None)
+        decision.pop("_force_compose", None)
+        return decision
+
+    action = str(decision.get("action") or "")
+    need = bool(
+        decision.get("_expand_compose")
+        or decision.get("_force_compose")
+        or action in ("idle", "reflect", "work", "rest", "eat", "inspect", "practice_skill")
+        or (action == "compose_proposal" and len(str(decision.get("utterance") or "")) < 120)
+    )
+    if not need:
+        decision.pop("_expand_compose", None)
+        decision.pop("_force_compose", None)
+        return decision
+
+    out = _llm_expand_compose(
+        ollama,
+        model,
+        agent_name,
+        system,
+        observe,
+        seed_title=str(decision.get("item") or "") or None,
+        seed_body=str(decision.get("utterance") or "") or None,
+    )
+    return out
 
 
 def _substantive_reply(
@@ -1325,8 +1479,11 @@ def decide_act(
     random.shuffle(nearby)
 
     def _san(d: dict[str, Any]) -> dict[str, Any]:
-        return _sanitize_decision(
+        cleaned = _sanitize_decision(
             d, agent_name, system, observe, fps, banned, peers_hist
+        )
+        return _maybe_force_prep_compose(
+            ollama, model, agent_name, system, observe, cleaned
         )
 
     addressed = _addressed_line(observe)
@@ -1411,15 +1568,27 @@ def decide_act(
             "item": None,
         }
 
-    # Drop stale walk thoughts after arrival so they don't pollute speech fuel.
+    # Drop stale walk / process-noise thoughts so they don't pollute speech fuel.
     thought_now = str(you.get("thought") or "")
     if you.get("status") != "walking" and (
-        thought_now.lower().startswith(("walking to", "heading to", "too far"))
+        thought_now.lower().startswith(("walking to", "heading to", "too far", "forced process:"))
         or "(0 tiles left)" in thought_now.lower()
         or thought_now.strip().lower() == "why i am saying this"
+        or re.match(
+            r"^(Blocked |Unknown action|compose_proposal needs|At .+ for hourly)",
+            thought_now,
+            re.I,
+        )
     ):
         you = {**you, "thought": None}
-        observe = {**observe, "you": you}
+    goal_now = str(you.get("goal") or "")
+    if re.match(
+        r"^(Blocked |Unknown action|compose_proposal needs|nominate_idea needs|Forced process:)",
+        goal_now,
+        re.I,
+    ):
+        you = {**you, "goal": None, "mindset": None}
+    observe = {**observe, "you": you}
 
     # Prefer approaching a peer we have NOT recently spoken with.
     if in_sight and not nearby and not waiting and random.random() < 0.7:

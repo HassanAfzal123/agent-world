@@ -954,11 +954,21 @@ export async function POST(req: Request) {
             p_commit_detail: commit.commit_detail,
             p_commit_ticks: commit.commit_ticks,
             p_mindset:
-              finalAction === "reflect" && decision.thought
+              finalAction === "reflect" &&
+              decision.thought &&
+              !/^(forced process:|blocked |unknown action|compose_proposal needs|nominate_idea needs)/i.test(
+                decision.thought.trim(),
+              )
                 ? decision.thought.slice(0, 180)
                 : null,
           });
-        } else if (finalAction === "reflect" && decision.thought) {
+        } else if (
+          finalAction === "reflect" &&
+          decision.thought &&
+          !/^(forced process:|blocked |unknown action|compose_proposal needs|nominate_idea needs|At .+ for hourly)/i.test(
+            decision.thought.trim(),
+          )
+        ) {
           await supabase.rpc("set_agent_commitment", {
             p_agent_id: agent.id,
             p_commit_action: agent.commit_action,
@@ -997,7 +1007,10 @@ export async function POST(req: Request) {
         // Public aim refresh
         if (
           (finalAction === "set_plan" || finalAction === "reflect") &&
-          (decision.plan || decision.thought)
+          (decision.plan || decision.thought) &&
+          !/^(forced process:|blocked |unknown action|compose_proposal needs|nominate_idea needs|walking to )/i.test(
+            (decision.plan || decision.thought || "").trim(),
+          )
         ) {
           await supabase.rpc("set_agent_goal", {
             p_agent_id: agent.id,
