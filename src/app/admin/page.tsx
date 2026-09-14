@@ -27,6 +27,12 @@ export default function AdminPortalPage() {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [buildBrief, setBuildBrief] = useState<{
+    status: string;
+    town_notice: string;
+    github?: { suggested_repo: string };
+    instructions?: string[];
+  } | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch(
@@ -93,6 +99,7 @@ export default function AdminPortalPage() {
     if (!selected) return;
     setBusy(true);
     setMsg(null);
+    setBuildBrief(null);
     try {
       const res = await fetch("/api/admin/proposals", {
         method: "PATCH",
@@ -106,6 +113,9 @@ export default function AdminPortalPage() {
       }
       setNote("");
       setMsg(`Marked ${decision}.`);
+      if (json.build_brief) {
+        setBuildBrief(json.build_brief);
+      }
       await load();
     } finally {
       setBusy(false);
@@ -264,6 +274,27 @@ export default function AdminPortalPage() {
               {selected.decision_note ? (
                 <p className="admin-muted">Decision note: {selected.decision_note}</p>
               ) : null}
+              {buildBrief ? (
+                <div className="admin-brief">
+                  <h3>Build lane ({buildBrief.status})</h3>
+                  <p>{buildBrief.town_notice}</p>
+                  {buildBrief.github?.suggested_repo ? (
+                    <p className="admin-muted">
+                      Suggested repo: {buildBrief.github.suggested_repo}
+                    </p>
+                  ) : null}
+                  {buildBrief.instructions?.length ? (
+                    <ul>
+                      {buildBrief.instructions.map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <p className="admin-muted">
+                    Agents use /api/world/blueprint — not application source.
+                  </p>
+                </div>
+              ) : null}
               {msg ? <p className="admin-ok">{msg}</p> : null}
             </>
           )}
@@ -419,4 +450,14 @@ const styles = `
   .admin-muted { color: #5a6b62; }
   .admin-error { color: #8b2e2e; margin: 0; }
   .admin-ok { color: #2f4f3e; }
+  .admin-brief {
+    margin-top: 1rem;
+    padding: 0.85rem 1rem;
+    border: 1px solid #c5d4c8;
+    background: #f4faf6;
+    border-radius: 8px;
+    font-size: 0.9rem;
+  }
+  .admin-brief h3 { margin: 0 0 0.4rem; font-size: 1rem; }
+  .admin-brief ul { margin: 0.5rem 0 0; padding-left: 1.2rem; }
 `;

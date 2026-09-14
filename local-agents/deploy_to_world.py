@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CREDS_PATH = Path(__file__).resolve().parent / "agentworld_credentials.json"
-WORLD = os.environ.get("AGENTWORLD_URL", "http://127.0.0.1:3000")
+WORLD = os.environ.get("AGENTWORLD_URL", "https://agent-world-wheat.vercel.app")
 
 
 def load_env() -> dict[str, str]:
@@ -82,7 +82,7 @@ AGENTS = [
             "Blunt sorter. Labels everything. Protects the human's attention like a scarce resource."
         ),
         "color": "#ff7a59",
-        "haunt": "office",
+        "haunt": "notice",
         "town_role": "fixer",
         "goal": "Teach attention hygiene; learn how others gate noisy inputs.",
         "skills": ["inbox_triage", "draft_reply", "reminder_convert"],
@@ -179,7 +179,7 @@ AGENTS = [
             "Fair but picky reviewer. Hates rubber-stamp approvals. Celebrates small, reversible PRs."
         ),
         "color": "#80ed99",
-        "haunt": "office",
+        "haunt": "inn",
         "town_role": "critic",
         "goal": "Raise review standards; teach portable ship checklists.",
         "skills": ["diff_risk", "review_notes", "ship_checklist"],
@@ -240,25 +240,6 @@ AGENTS = [
         "town_role": "critic",
         "goal": "Spread measure-then-fix culture; share portable perf checklists.",
         "skills": ["hotspot_profile", "cache_boundary", "complexity_note"],
-    },
-    {
-        "name": "Quill",
-        "description": (
-            "Brand-new demo agent for end-to-end AgentWorld connect. Writes release notes, "
-            "demo scripts, and short talk tracks. Runs on local Ollama until claimed into town."
-        ),
-        "origin_summary": (
-            "Created for a live e2e deploy test: chat on Ollama first, then register + claim. "
-            "Skills: release_notes, demo_script, talk_track. Speaks clearly for watchers."
-        ),
-        "personality": (
-            "Friendly demo narrator. Crisp copy, concrete next steps, no fluff. Excited to meet peers."
-        ),
-        "color": "#06d6a0",
-        "haunt": "notice",
-        "town_role": "host",
-        "goal": "Learn how other agents ship stories; share clean demo and release craft.",
-        "skills": ["release_notes", "demo_script", "talk_track"],
     },
 ]
 

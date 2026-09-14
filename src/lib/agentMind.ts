@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ACTIONS, type ActionName } from "@/lib/townMap";
 import type { AgentDecision } from "@/lib/llm";
-import { cleanSpeech, fullSpeech, SPEECH_MAX, TOPIC_MAX } from "@/lib/spectator";
+import { cleanSpeech, fullSpeech, isSpeechSpam, SPEECH_MAX, TOPIC_MAX } from "@/lib/spectator";
 import { pickMeetupPlace, placeIsBusy } from "@/lib/meetupPlaces";
 import {
   commitmentAfterArrival,
@@ -331,41 +331,53 @@ export async function buildObserve(
         ? Math.max(0, 41 - utcMin)
         : Math.max(0, 60 - utcMin + 41)
       : 0;
+  const inTownHallWindow =
+    phase === "meeting" ||
+    phase === "voting" ||
+    phase === "filing" ||
+    (phase === "collaborate" && utcMin >= 33 && utcMin < 41);
 
-  // HARD PROCEDURE (ideas open; structure fixed) — hourly winning product cycle.
-  priorities.unshift(
-    `HOURLY WINNING-PRODUCT CYCLE (UTC hour ${cycle.hour_key || "?"}, phase=${phase}, minute=${utcMin}): ` +
-      "Procedure fixed; IDEA CONTENT yours. Must GROUP (invite_to_group), co-write a DETAILED draft (≥400 chars), nominate as a group, vote, then group-help the filer submit a detailed report at library. Meeting at UTC :41.",
-  );
-  priorities.unshift(
-    "SPEECH: use your own words about the tool. Work it NOW. Never schedule cafe/park meetups for later/Friday. Never say 'lock one next step', 'practical piece', or 'coordination piece'.",
-  );
+  // Outside Town Hall windows: live as neighbors (1:1). Soft reminder only when meeting is near.
+  if (!inTownHallWindow) {
+    priorities.unshift(
+      "DEFAULT LIFE: Prefer 1:1 talk/ask_question with one nearby peer — plans, favors, town gossip, tech/AI ideas from the wider world. " +
+        "Optional rare invite_to_group only if a third craft is truly needed. Do NOT spam procedure lines or force tool groups all day.",
+    );
+    if (phase === "collaborate" && minsToMeeting <= 20 && minsToMeeting > 0) {
+      priorities.push(
+        `Soft reminder: Town Hall Meeting in ~${minsToMeeting} min at plaza — you may sketch a tool idea in 1:1, but keep living town life until prep (:33).`,
+      );
+    }
+  } else {
+    // HARD PROCEDURE only inside prep/meeting/voting/filing.
+    priorities.unshift(
+      `HOURLY WINNING-PRODUCT CYCLE (UTC hour ${cycle.hour_key || "?"}, phase=${phase}, minute=${utcMin}): ` +
+        "Procedure fixed; IDEA CONTENT yours. Must GROUP (invite_to_group), co-write a DETAILED draft (≥400 chars), nominate as a group, vote, then group-help the filer submit a detailed report at library. Meeting at UTC :41.",
+    );
+    priorities.unshift(
+      "SPEECH: use your own words about the tool. Work it NOW. Never schedule cafe/park meetups for later/Friday. Never say 'lock one next step', 'practical piece', or 'coordination piece'.",
+    );
+  }
 
-  if (phase === "collaborate") {
+  if (phase === "collaborate" && inTownHallWindow) {
     priorities.unshift(
       `PREPARE FOR :41 MEETING — ${minsToMeeting} min left. Do NOT solo-spam one-line nominations. ` +
         "1) discuss a town tool pain, 2) invite_to_group (≥3 agents), 3) co-write compose_proposal with sections (problem/design/roles/risks/success), 4) nominate only after group turns. Ideas are yours; process is required.",
     );
-    if (minsToMeeting <= 10) {
-      priorities.unshift(
-        "FORCED PREP (:33-:40): Be at plaza. Open/join a tool GROUP. Expand the draft together. Empty/solo ballot wastes the hour.",
-      );
-    }
     priorities.unshift(
-      "PHASE collaborate: Tool ideas need a GROUP. Use invite_to_group. Co-write compose_proposal (≥400 chars, multi-section). " +
-        "nominate_idea only after group discussion — solo one-liners are rejected by the town process.",
+      "FORCED PREP (:33-:40): Be at plaza. Open/join a tool GROUP. Expand the draft together. Empty/solo ballot wastes the hour.",
     );
     if (nearby.length >= 1 && Number(thread?.turn_count || 0) >= 2) {
       priorities.push(
         "If this thread's idea is strong enough to explore as a town tool, invite_to_group a third peer who has relevant craft — collaborate, don't spam groups for chitchat.",
       );
     }
-    if (!hasDraft && minsToMeeting <= 20) {
+    if (!hasDraft) {
       priorities.unshift(
         "URGENT process: You still have no proposal draft and the meeting is soon. Prefer talk/ask about a buildable town tool, then compose_proposal — YOU pick which tool.",
       );
     }
-    if (!noms.length && minsToMeeting <= 25) {
+    if (!noms.length) {
       priorities.push(
         "No nominations on the ballot yet this hour — someone must nominate_idea before voting or the cycle closes empty.",
       );
@@ -484,6 +496,16 @@ export async function buildObserve(
       : proposalsRaw
         ? [proposalsRaw]
         : [],
+    /** Public contract for building tools — never AgentWorld source. */
+    world_blueprint_url: "/api/world/blueprint",
+    world_blueprint_markdown_url: "/api/world/blueprint?format=md",
+    /** Server-side GitHub proxy — use AgentWorld Bearer key; never a GitHub token. */
+    tools_api: {
+      list: "/api/agents/me/tools",
+      create_repo: "/api/agents/me/tools/create-repo",
+      push: "/api/agents/me/tools/push",
+      status: "/api/agents/me/tools/status",
+    },
     proposal_shelf: shelfRaw || null,
     proposal_cycle: cycleRaw || null,
     meeting_in_minutes:
@@ -867,6 +889,15 @@ export async function applyExternalDecision(
   });
   let activeThread = (openThrRaw || null) as ConversationThread | null;
 
+  const isThreadParticipant = (thr: ConversationThread | null | undefined) => {
+    if (!thr || thr.status !== "open") return false;
+    if (thr.starter_id === agent.id || thr.other_id === agent.id) return true;
+    if (Array.isArray(thr.participant_ids) && thr.participant_ids.includes(agent.id)) {
+      return true;
+    }
+    return false;
+  };
+
   const speechBody =
     fullSpeech(rawSpeech) ||
     cleanSpeech(decision.utterance || decision.thought || "", 0);
@@ -883,7 +914,17 @@ export async function applyExternalDecision(
   // Groups only via invite_to_group — never because people share a place.
   // Participants must be at the same place now (remote thread partners caused
   // too_far walks and zero groups during the :48 cycle).
-  const wantGroup = finalAction === "invite_to_group";
+  let wantGroup = finalAction === "invite_to_group";
+  // Already in an open group → never re-invite (that spam-posts procedure lines).
+  if (
+    wantGroup &&
+    activeThread?.status === "open" &&
+    activeThread.mode === "group" &&
+    isThreadParticipant(activeThread)
+  ) {
+    wantGroup = false;
+    finalAction = speechBody && !isSpeechSpam(speechBody) ? "talk" : "idle";
+  }
   const samePlaceIds = new Set(samePlacePeers.map((p) => p.id));
   let groupPeerIds: string[] = [];
   if (wantGroup) {
@@ -936,15 +977,6 @@ export async function applyExternalDecision(
     "start_shift",
   ]);
 
-  const isThreadParticipant = (thr: ConversationThread | null | undefined) => {
-    if (!thr || thr.status !== "open") return false;
-    if (thr.starter_id === agent.id || thr.other_id === agent.id) return true;
-    if (Array.isArray(thr.participant_ids) && thr.participant_ids.includes(agent.id)) {
-      return true;
-    }
-    return false;
-  };
-
   if (
     speechBody &&
     speechBody.length >= 8 &&
@@ -968,7 +1000,7 @@ export async function applyExternalDecision(
       decision.item || agent.pending_answer_topic,
     );
 
-    // Group open must not be blocked by repeat-line gate (forced invite text is stable).
+    // Group open: reject procedure spam bodies; skip if last line was the same.
     if (wantGroup) {
       if (groupPeerIds.length < 2) {
         return {
@@ -977,46 +1009,52 @@ export async function applyExternalDecision(
           status: 400,
         };
       }
-      const meetPlace =
-        (decision.target_place &&
-        places.some((p) => p.id === decision.target_place)
-          ? decision.target_place
-          : null) ||
-        agent.place_id ||
-        pickMeetupPlace({
-          agents: [agent, ...peers],
-          places,
-          prefer: agent.place_id,
-          avoid: null,
-          selfHaunt: agent.haunt_place_id,
-          salt: `group:${agent.name}:${topicRaw}`,
-        });
-      // Prefer meeting where we already are — appointments for next hour pulled
-      // agents off plaza during the meeting window.
-      const gatherHere = agent.place_id || meetPlace;
-      const { data: opened, error: groupErr } = await db.rpc(
-        "open_group_conversation",
-        {
-          p_starter: agent.id,
-          p_participants: groupPeerIds,
-          p_topic: topicRaw,
-          p_body: speechBody,
-          p_place: gatherHere,
-          p_max_turns: 36,
-        },
-      );
-      if (groupErr) {
-        return { ok: false, error: groupErr.message, status: 400 };
+      if (isRepeatThreadLine(speechBody, lastBody)) {
+        // Already invited with this line — do not re-post into the group.
+        await db
+          .from("agents")
+          .update({ last_action: "invite_to_group" })
+          .eq("id", agent.id);
+      } else {
+        const meetPlace =
+          (decision.target_place &&
+          places.some((p) => p.id === decision.target_place)
+            ? decision.target_place
+            : null) ||
+          agent.place_id ||
+          pickMeetupPlace({
+            agents: [agent, ...peers],
+            places,
+            prefer: agent.place_id,
+            avoid: null,
+            selfHaunt: agent.haunt_place_id,
+            salt: `group:${agent.name}:${topicRaw}`,
+          });
+        const gatherHere = agent.place_id || meetPlace;
+        const { data: opened, error: groupErr } = await db.rpc(
+          "open_group_conversation",
+          {
+            p_starter: agent.id,
+            p_participants: groupPeerIds,
+            p_topic: topicRaw,
+            p_body: speechBody,
+            p_place: gatherHere,
+            p_max_turns: 36,
+          },
+        );
+        if (groupErr) {
+          return { ok: false, error: groupErr.message, status: 400 };
+        }
+        if (!opened) {
+          return { ok: false, error: "group_open_failed", status: 400 };
+        }
+        activeThread = opened as ConversationThread;
+        momentThreadId = activeThread.id;
+        await db
+          .from("agents")
+          .update({ last_action: "invite_to_group" })
+          .eq("id", agent.id);
       }
-      if (!opened) {
-        return { ok: false, error: "group_open_failed", status: 400 };
-      }
-      activeThread = opened as ConversationThread;
-      momentThreadId = activeThread.id;
-      await db
-        .from("agents")
-        .update({ last_action: "invite_to_group" })
-        .eq("id", agent.id);
     } else if (!isRepeatThreadLine(speechBody, lastBody)) {
       const inOpenThread =
         isThreadParticipant(activeThread) &&
@@ -1070,7 +1108,7 @@ export async function applyExternalDecision(
   const keepAliveOnWalk =
     finalAction === "walk" &&
     activeThread?.status === "open" &&
-    (turns < 10 ||
+    (turns < 16 ||
       activeThread.mode === "group" ||
       Boolean(activeThread.waiting_on));
   if (

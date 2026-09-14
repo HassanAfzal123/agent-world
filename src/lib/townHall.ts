@@ -1,9 +1,20 @@
-/** Town Hall Meeting cycle helpers (UTC schedule mirrors DB `_proposal_phase_for_minute`). */
+/** Town Hall Meeting cycle helpers.
+ * Product intent: 3 meetings/day (UTC 08 / 14 / 20) — see WORLD_BLUEPRINT +
+ * supabase/migrations/20260915_town_hall_three_daily_force_start.sql.
+ * Legacy hourly :41 windows remain as fallback until that migration is applied.
+ */
 
+export const TOWN_HALL_SLOT_HOURS_UTC = [8, 14, 20] as const;
 export const TOWN_HALL_MEETING_MINUTE = 41;
 export const TOWN_HALL_VOTING_MINUTE = 49;
 export const TOWN_HALL_FILING_MINUTE = 52;
 export const TOWN_HALL_COLLAB_RESUME_MINUTE = 55;
+
+/** Minutes from slot start T: meeting / voting / filing end offsets (3×/day model). */
+export const SLOT_MEETING_MIN = 0;
+export const SLOT_VOTING_MIN = 12;
+export const SLOT_FILING_MIN = 18;
+export const SLOT_END_MIN = 28;
 
 export type TownHallNomination = {
   id: string;
@@ -49,13 +60,45 @@ export function isTownHallLive(phase: TownHallPhase): boolean {
   return phase === "meeting" || phase === "voting" || phase === "filing";
 }
 
-/** Minutes until the next Town Hall Meeting start (:41 UTC). */
+/** Minutes until the next Town Hall Meeting start (:41 UTC) — legacy hourly. */
 export function minutesToNextMeeting(utcMinute: number): number {
   const m = Math.max(0, Math.min(59, Math.floor(utcMinute)));
   if (m < TOWN_HALL_MEETING_MINUTE) {
     return TOWN_HALL_MEETING_MINUTE - m;
   }
   return 60 - m + TOWN_HALL_MEETING_MINUTE;
+}
+
+/** Minutes until next 3×/day slot start (UTC), ignoring force-start. */
+export function minutesToNextSlotMeeting(now: Date = new Date()): number {
+  const utc = new Date(now.toISOString());
+  const dayStart = Date.UTC(
+    utc.getUTCFullYear(),
+    utc.getUTCMonth(),
+    utc.getUTCDate(),
+  );
+  const nowMs = utc.getTime();
+  const candidates: number[] = [];
+  for (const h of TOWN_HALL_SLOT_HOURS_UTC) {
+    candidates.push(dayStart + h * 3600_000);
+  }
+  // tomorrow first slot
+  candidates.push(dayStart + 24 * 3600_000 + TOWN_HALL_SLOT_HOURS_UTC[0] * 3600_000);
+  for (const start of candidates) {
+    if (start > nowMs) {
+      return Math.max(0, Math.ceil((start - nowMs) / 60_000));
+    }
+  }
+  return 0;
+}
+
+/** Phase relative to a slot/force start timestamp (3×/day + force model). */
+export function phaseFromSlotElapsed(elapsedMin: number): TownHallPhase {
+  if (elapsedMin < SLOT_MEETING_MIN) return "collaborate";
+  if (elapsedMin < SLOT_VOTING_MIN) return "meeting";
+  if (elapsedMin < SLOT_FILING_MIN) return "voting";
+  if (elapsedMin < SLOT_END_MIN) return "filing";
+  return "closed";
 }
 
 /** Minutes left in the current live phase window. */

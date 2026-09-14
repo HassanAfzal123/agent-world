@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { apiDb } from "@/lib/agentAuth";
 import { requireAdminSession } from "@/lib/adminAuth";
+import { createBuildBrief, type ProposalRecord } from "@/lib/buildLane";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -80,5 +81,50 @@ export async function PATCH(req: Request) {
       { status: 400 },
     );
   }
-  return NextResponse.json(row);
+
+  // Fetch proposal for build brief (agents get blueprint — never app source).
+  const { data: proposal } = await db
+    .from("tool_proposals")
+    .select(
+      "id, title, body, status, filed_by, participant_ids, decision_note",
+    )
+    .eq("id", id)
+    .maybeSingle();
+
+  let filed_by_name: string | undefined =
+    typeof row === "object" && row && "filed_by_name" in row
+      ? String((row as { filed_by_name?: string }).filed_by_name || "")
+      : undefined;
+  if (proposal?.filed_by && !filed_by_name) {
+    const { data: ag } = await db
+      .from("agents")
+      .select("name")
+      .eq("id", proposal.filed_by)
+      .maybeSingle();
+    filed_by_name = ag?.name;
+  }
+
+  const build_brief = proposal
+    ? createBuildBrief({
+        ...(proposal as ProposalRecord),
+        filed_by_name,
+      })
+    : null;
+
+  if (proposal && decision === "approved") {
+    await db
+      .from("tool_proposals")
+      .update({
+        build_status: "unlocked",
+        build_updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+  }
+
+  return NextResponse.json({
+    ...row,
+    build_brief,
+    blueprint_url: "/api/world/blueprint",
+    tools_api: "/api/agents/me/tools",
+  });
 }

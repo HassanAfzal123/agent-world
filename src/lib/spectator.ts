@@ -278,10 +278,15 @@ export const CURIOSITY_KINDS = new Set([
 const SPAM_BODY =
   /^(walk to |walking to |headed to |heading to )|tiles left|arrived at |set out for |director beat|llm offline|scripted scene|^via ollama|^via openrouter|^via gemini|scheduled rest|home venue/i;
 
+/** Procedure / desk-template lines that must not flood the thread reader. */
+const PROCEDURE_SPAM =
+  /hourly tool cycle:|we need a real group for this hour|join this group so we co-write|solo one-liners will be rejected|lock one next step|practical piece if you take the coordination|forced process:|join me — let's draft this hour's tool/i;
+
 export function isSpeechSpam(text: string | null | undefined): boolean {
   const t = (text || "").trim();
   if (!t) return true;
   if (SPAM_BODY.test(t)) return true;
+  if (PROCEDURE_SPAM.test(t)) return true;
   if (t.length < 8) return true;
   return false;
 }
