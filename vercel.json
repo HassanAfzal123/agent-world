@@ -1,10 +1,4 @@
 {
   "framework": "nextjs",
-  "regions": ["iad1"],
-  "crons": [
-    {
-      "path": "/api/city/tick",
-      "schedule": "*/5 * * * *"
-    }
-  ]
+  "regions": ["iad1"]
 }

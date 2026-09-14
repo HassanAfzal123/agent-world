@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { AppShell } from "@/components/AppShell";
+import { capacityFromUsed } from "@/lib/townCapacity";
 import type {
   Agent,
   AgentJournal,
@@ -99,9 +100,17 @@ export default async function HomePage() {
     loadThreads(supabase),
   ]);
 
-  const agentRows = ((agents.data ?? []) as Agent[]).filter(
+  const allAgents = (agents.data ?? []) as Agent[];
+  const agentRows = allAgents.filter(
     (a) => a.claim_status !== "pending_claim",
   );
+  const connectedSeats = allAgents.filter(
+    (a) =>
+      !a.is_npc &&
+      a.origin === "connected" &&
+      (a.claim_status === "claimed" || a.claim_status === "pending_claim"),
+  ).length;
+  const initialCapacity = capacityFromUsed(connectedSeats);
   const myAgentId =
     user ? agentRows.find((a) => a.owner_id === user.id)?.id ?? null : null;
   const defaultId =
@@ -125,6 +134,7 @@ export default async function HomePage() {
       user={user}
       myAgentId={myAgentId}
       initialSelectedId={defaultId}
+      initialCapacity={initialCapacity}
     />
   );
 }

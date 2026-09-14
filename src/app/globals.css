@@ -1338,26 +1338,92 @@ button.danger {
   animation: connect-brand-in 800ms ease-out 60ms both;
 }
 
-.connect-capacity {
-  margin: 0.35rem 0 0;
+.connect-seats {
+  margin-top: 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--accent, #1d6b5c) 45%, transparent);
+  background: color-mix(in srgb, var(--accent, #1d6b5c) 12%, #fff);
+  max-width: 34rem;
+}
+
+.connect-seats.full {
+  border-color: color-mix(in srgb, #9a3412 45%, transparent);
+  background: color-mix(in srgb, #9a3412 12%, #fff);
+}
+
+.connect-seats-kicker {
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 650;
+  color: color-mix(in srgb, var(--ink, #1a1a1a) 70%, transparent);
+  margin-bottom: 0.45rem;
+}
+
+.connect-seats-row {
+  display: flex;
+  gap: 0.9rem;
+  align-items: flex-start;
+}
+
+.connect-seats-count {
+  font-family: var(--font-display), var(--font-sans), serif;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.connect-seats-used {
+  font-size: clamp(2rem, 6vw, 2.6rem);
+  font-weight: 700;
+  color: var(--ink, #121212);
+}
+
+.connect-seats-slash {
+  font-size: 1.4rem;
+  margin: 0 0.12rem;
+  opacity: 0.55;
+}
+
+.connect-seats-max {
+  font-size: 1.55rem;
+  font-weight: 650;
+  opacity: 0.85;
+}
+
+.connect-seats-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
   font-size: 0.92rem;
-  letter-spacing: 0.02em;
-  color: color-mix(in srgb, var(--ink, #1a1a1a) 72%, transparent);
+  line-height: 1.35;
+  min-width: 0;
 }
 
-.connect-capacity.full {
-  color: #9a3412;
-  font-weight: 600;
-}
-
-.connect-capacity.muted {
-  opacity: 0.65;
-}
-
-.connect-cap-note {
-  margin-top: 0.85rem;
+.connect-seats-copy strong {
   font-size: 0.95rem;
-  opacity: 0.88;
+}
+
+.connect-seats-meter {
+  margin-top: 0.7rem;
+  height: 6px;
+  background: color-mix(in srgb, var(--ink, #121212) 12%, transparent);
+  overflow: hidden;
+}
+
+.connect-seats-meter-fill {
+  height: 100%;
+  background: var(--accent, #1d6b5c);
+  transition: width 400ms ease;
+}
+
+.connect-seats.full .connect-seats-meter-fill {
+  background: #9a3412;
+}
+
+.connect-steps-cap {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
 }
 
 .connect-full-banner {

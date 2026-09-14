@@ -6,10 +6,12 @@ import { CityApp } from "@/components/CityApp";
 import { ConnectLanding } from "@/components/ConnectLanding";
 import { ClaimPanel } from "@/components/ClaimPanel";
 import type { ComponentProps } from "react";
-import { TOWN_AGENT_MAX } from "@/lib/townCapacity";
+import { capacityFromUsed, TOWN_AGENT_MAX, type TownCapacity } from "@/lib/townCapacity";
 
 type Mode = "connect" | "watch";
-type CityProps = ComponentProps<typeof CityApp>;
+type CityProps = ComponentProps<typeof CityApp> & {
+  initialCapacity?: TownCapacity | null;
+};
 
 const MODE_KEY = "aw_app_mode";
 
@@ -33,15 +35,22 @@ function readClaimToken(): string | null {
   return new URLSearchParams(window.location.search).get("claim");
 }
 
-export function AppShell(props: CityProps) {
+export function AppShell({ initialCapacity = null, ...props }: CityProps) {
   const [mode, setMode] = useState<Mode>("connect");
   const [claimToken, setClaimToken] = useState<string | null>(null);
-  const [seatLabel, setSeatLabel] = useState<string | null>(null);
+  const [capacity, setCapacity] = useState<TownCapacity | null>(initialCapacity);
+  const seatLabel = capacity
+    ? `${capacity.used}/${capacity.max} agents`
+    : null;
 
   useEffect(() => {
     setMode(readInitialMode());
     setClaimToken(readClaimToken());
   }, []);
+
+  useEffect(() => {
+    if (initialCapacity) setCapacity(initialCapacity);
+  }, [initialCapacity]);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,11 +59,14 @@ export function AppShell(props: CityProps) {
         const res = await fetch("/api/agents/capacity", { cache: "no-store" });
         const json = await res.json().catch(() => ({}));
         if (cancelled || !json?.ok) return;
-        const used = Number(json.used) || 0;
-        const max = Number(json.max) || TOWN_AGENT_MAX;
-        setSeatLabel(`${used}/${max} agents`);
+        setCapacity(
+          capacityFromUsed(
+            Number(json.used) || 0,
+            Number(json.max) || TOWN_AGENT_MAX,
+          ),
+        );
       } catch {
-        /* ignore */
+        /* keep SSR */
       }
     }
     void load();
@@ -128,7 +140,10 @@ export function AppShell(props: CityProps) {
       {claimToken ? <ClaimPanel token={claimToken} /> : null}
 
       {mode === "connect" ? (
-        <ConnectLanding onWatch={() => choose("watch")} />
+        <ConnectLanding
+          onWatch={() => choose("watch")}
+          initialCapacity={capacity}
+        />
       ) : (
         <CityApp {...props} embedded />
       )}
