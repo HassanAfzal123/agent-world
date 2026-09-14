@@ -518,9 +518,19 @@ export function threadFeed(opts: {
     score += new Date(t.updated_at).getTime() / 1e12;
 
     const last = lines[lines.length - 1];
-    const participantNames = participants
+    const fromMsgs = Array.from(
+      new Set(lines.map((l) => l.agentId).filter(Boolean)),
+    );
+    const idSet = Array.from(
+      new Set([...participants, ...fromMsgs].filter(Boolean)),
+    );
+    const participantNames = idSet
       .map((id) => byId.get(id)?.name)
       .filter((n): n is string => Boolean(n));
+    const isGroup =
+      t.mode === "group" ||
+      (Array.isArray(t.participant_ids) && t.participant_ids.length >= 3) ||
+      participantNames.length >= 3;
     cards.push({
       id: t.id,
       topic: (t.topic || lines[0]?.body || "Conversation").slice(0, TOPIC_MAX),
@@ -530,7 +540,7 @@ export function threadFeed(opts: {
       otherId: t.other_id,
       starterName: byId.get(t.starter_id)?.name || "Someone",
       otherName: byId.get(t.other_id)?.name || "Someone",
-      mode: t.mode || "dyad",
+      mode: isGroup ? "group" : t.mode || "dyad",
       participantNames,
       updatedAt: t.updated_at,
       turnCount: t.turn_count || lines.length,

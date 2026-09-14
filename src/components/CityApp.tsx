@@ -1036,30 +1036,40 @@ export function CityApp({
                         : ""}
                     </p>
                     <div className="thread-reader-actions">
-                      <button
-                        type="button"
-                        className="linkish"
-                        onClick={() => {
-                          setSelectedId(selectedThread.starterId);
-                          setFocusAgentId(selectedThread.starterId);
-                          setFocusNonce((n) => n + 1);
-                          setSideTab("agent");
-                        }}
-                      >
-                        Focus {selectedThread.starterName}
-                      </button>
-                      <button
-                        type="button"
-                        className="linkish"
-                        onClick={() => {
-                          setSelectedId(selectedThread.otherId);
-                          setFocusAgentId(selectedThread.otherId);
-                          setFocusNonce((n) => n + 1);
-                          setSideTab("agent");
-                        }}
-                      >
-                        Focus {selectedThread.otherName}
-                      </button>
+                      {(selectedThread.mode === "group" &&
+                      selectedThread.participantNames?.length
+                        ? selectedThread.lines
+                            .map((l) => l.agentId)
+                            .filter(
+                              (id, i, arr) => id && arr.indexOf(id) === i,
+                            )
+                        : [
+                            selectedThread.starterId,
+                            selectedThread.otherId,
+                          ]
+                      ).map((agentId) => {
+                        const who = agents.find((a) => a.id === agentId);
+                        const label =
+                          who?.name ||
+                          (agentId === selectedThread.starterId
+                            ? selectedThread.starterName
+                            : selectedThread.otherName);
+                        return (
+                          <button
+                            key={`focus-${agentId}`}
+                            type="button"
+                            className="linkish"
+                            onClick={() => {
+                              setSelectedId(agentId);
+                              setFocusAgentId(agentId);
+                              setFocusNonce((n) => n + 1);
+                              setSideTab("agent");
+                            }}
+                          >
+                            Focus {label}
+                          </button>
+                        );
+                      })}
                     </div>
                   </header>
                   <div className="thread-reader-scroll">
@@ -1124,7 +1134,11 @@ export function CityApp({
                               </span>
                             </span>
                             <em>
-                              {card.starterName} ↔ {card.otherName}
+                              {card.mode === "group" &&
+                              card.participantNames &&
+                              card.participantNames.length >= 3
+                                ? `Group · ${card.participantNames.join(", ")}`
+                                : `${card.starterName} ↔ ${card.otherName}`}
                               {card.status === "open" ? " · live" : ""}
                               {" · "}
                               {card.turnCount} turns
