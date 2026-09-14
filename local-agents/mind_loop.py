@@ -1255,7 +1255,7 @@ def _maybe_force_prep_compose(
     observe: dict[str, Any],
     decision: dict[str, Any],
 ) -> dict[str, Any]:
-    """During :10-:19 prep at plaza, idle/failed-compose → write a real draft."""
+    """During prep/meeting at plaza with empty ballot, idle/failed-compose → draft or nominate."""
     cycle = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
     phase = str(cycle.get("phase") or "")
     utc_min = int(cycle.get("utc_minute") or 0)
@@ -1263,26 +1263,46 @@ def _maybe_force_prep_compose(
     meet = str(cycle.get("meeting_place") or "plaza")
     at_meet = str(you.get("place_id") or "") == meet
     noms = cycle.get("nominations") if isinstance(cycle.get("nominations"), list) else []
-    has_draft = bool(observe.get("my_proposal_draft"))
+    draft = observe.get("my_proposal_draft") if isinstance(observe.get("my_proposal_draft"), dict) else {}
+    has_draft = bool(draft.get("title"))
     prep = phase == "collaborate" and 10 <= utc_min < 20
-    if not prep or not at_meet or noms or has_draft:
-        decision.pop("_expand_compose", None)
-        decision.pop("_force_compose", None)
+    meeting_empty = phase == "meeting" and not noms
+    expand = bool(decision.pop("_expand_compose", None) or decision.pop("_force_compose", None))
+
+    if not at_meet or noms or not (prep or meeting_empty):
         return decision
+
+    if has_draft and meeting_empty:
+        title = str(draft.get("title") or "").strip()
+        body = str(draft.get("body") or "").strip()
+        if len(title) >= 8:
+            return {
+                "action": "nominate_idea",
+                "target_place": None,
+                "target_agent": None,
+                "item": title[:160],
+                "utterance": (body or title)[:2000],
+                "thought": "Meeting open — nominating my draft now.",
+            }
 
     action = str(decision.get("action") or "")
-    need = bool(
-        decision.get("_expand_compose")
-        or decision.get("_force_compose")
-        or action in ("idle", "reflect", "work", "rest", "eat", "inspect", "practice_skill")
-        or (action == "compose_proposal" and len(str(decision.get("utterance") or "")) < 120)
+    need = expand or action in (
+        "idle",
+        "reflect",
+        "work",
+        "rest",
+        "eat",
+        "inspect",
+        "practice_skill",
     )
+    if action == "compose_proposal" and len(str(decision.get("utterance") or "")) < 120:
+        need = True
+    if meeting_empty and not has_draft and action in ("talk", "ask_question", "share_experience"):
+        need = True
     if not need:
-        decision.pop("_expand_compose", None)
-        decision.pop("_force_compose", None)
         return decision
 
-    out = _llm_expand_compose(
+    return _llm_expand_compose(
         ollama,
         model,
         agent_name,
@@ -1291,7 +1311,6 @@ def _maybe_force_prep_compose(
         seed_title=str(decision.get("item") or "") or None,
         seed_body=str(decision.get("utterance") or "") or None,
     )
-    return out
 
 
 def _substantive_reply(
