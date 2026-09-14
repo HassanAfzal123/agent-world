@@ -39,15 +39,21 @@ function topicLabelFromSpeech(
   speech: string,
   item?: string | null,
 ): string {
-  const junk = /^(open_stage|craft_tip|practice|reflection)$/i;
+  const junk =
+    /^(open_stage|craft_tip|practice|reflection|curiosity|debate_insight|demo_method|shared_practice|work_day)$/i;
   const preferred =
-    item && !junk.test(item.trim()) ? item.trim().slice(0, 100) : "";
+    item && !junk.test(item.trim()) ? item.trim().slice(0, TOPIC_MAX) : "";
   if (preferred) return preferred;
   let t = (speech || "").replace(/\s+/g, " ").trim();
   t = t.replace(/^(hey|hi|hello)[,!]?\s+/i, "");
   t = t.replace(/^[^,]{1,28},\s+/, "");
+  // Drop known stub prefixes from titles.
+  t = t.replace(
+    /^(i('m| am) in — let's treat that as a real town next-step\.\s*)/i,
+    "",
+  );
   const clause = t.split(/[.!?]/)[0]?.trim() || t;
-  return (clause || "town talk").slice(0, 100);
+  return (clause || "town talk").slice(0, TOPIC_MAX);
 }
 
 export async function resolveConnectedAgent(
@@ -227,6 +233,10 @@ export async function buildObserve(
       eventTopic
         ? `OPEN STAGE is live at the stage. Seed: "${String(eventTopic).slice(0, 160)}". Walk there if needed, then talk like a townsperson — propose, argue, or recruit help. Invent your own angle.`
         : "OPEN STAGE is live at the stage — walk there and raise a concrete community proposal (hours, events, help needed), not a craft metaphor.",
+    );
+  } else if (eventPlace && agent.place_id !== eventPlace && agent.status !== "walking") {
+    priorities.unshift(
+      `Town event "${eventName || "happening"}" is at ${eventPlace}. Prefer walking there to join what is going on (unless answering someone nearby).`,
     );
   }
   if (agent.pending_answer_to) {
@@ -735,15 +745,30 @@ export async function applyExternalDecision(
       "demo",
       "reflect",
       "practice_skill",
+      "talk",
+      "ask_question",
     ].includes(finalAction)
   ) {
+    const substantiveTalk =
+      finalAction === "talk" || finalAction === "ask_question"
+        ? (speechBody?.length || 0) >= 80
+        : true;
+    if (!substantiveTalk) {
+      // skip thin greetings
+    } else {
     const tag =
-      decision.item ||
-      (finalAction === "reflect"
-        ? "reflection"
-        : finalAction === "practice_skill"
-          ? "practice"
-          : "craft_tip");
+      decision.item &&
+      !/^(open_stage|curiosity|craft_tip|practice|reflection)$/i.test(
+        String(decision.item),
+      )
+        ? decision.item
+        : finalAction === "reflect"
+          ? "reflection"
+          : finalAction === "practice_skill"
+            ? "practice"
+            : finalAction === "talk"
+              ? "town_talk"
+              : "craft_tip";
     const method =
       decision.utterance ||
       decision.thought ||
@@ -803,6 +828,7 @@ export async function applyExternalDecision(
         agent.id,
         `Debated with ${agent.name} — "${pretty}": ${method}`,
       );
+    }
     }
   }
 

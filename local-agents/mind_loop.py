@@ -332,13 +332,13 @@ def _decide_direct_answer(
     if not utterance or _is_bad_filler(utterance) or not _grounds_on_peer(
         utterance, peer_text
     ):
-        peer_short = re.sub(r"\s+", " ", peer_text).strip()[:60]
+        peer_short = re.sub(r"\s+", " ", peer_text).strip()[:70]
         utterance = (
-            f"{peer_name}, I'm in — let's treat that as a real town next-step. "
-            f"Meet me at the cafe in a bit and we'll pick one concrete action "
-            f"(not another metaphor). You raised: {peer_short}."
+            f"{peer_name}, yes — let's lock one next step on that. "
+            f"I'll take the practical piece if you take the coordination piece. "
+            f"You said: {peer_short}."
         )[:4000]
-        thought = f"Answering {peer_name} as a neighbor (fallback)."
+        thought = f"Answering {peer_name} with a concrete split of work."
     return {
         "action": "talk",
         "target_agent": peer_id,
@@ -583,7 +583,10 @@ def _is_theme_clone(text: str | None, banned: list[str]) -> bool:
 OPEN_STAGE_SPAM_RE = re.compile(
     r"open stage\s*[—\-:]|here is my craft take|not a recycled metaphor|"
     r"what this town should prioritize|on what you said\s*[—\-]|"
-    r"my take:\s*i treat that as|not a recycled meta",
+    r"my take:\s*i treat that as|not a recycled meta|"
+    r"i('m| am) in — let's treat that as a real town next-step|"
+    r"i hear the concrete ask\s*[—\-]|"
+    r"why i am saying this",
     re.I,
 )
 
@@ -1113,27 +1116,34 @@ def decide_act(
                 )
             )
 
-    # Open stage: gather at the stage — speech comes from the model, never canned.
+    # Open stage / town event gravity: gather at the event place when free.
     event = observe.get("event") if isinstance(observe.get("event"), dict) else {}
     event_name = str((event or {}).get("name") or "")
     event_topic = str((event or {}).get("topic") or "")
+    event_place = str((event or {}).get("place") or "")
     places = set(_place_ids(observe))
     if (
-        event_name == "council_session"
-        and not waiting
+        not waiting
         and not pending
         and you.get("status") != "walking"
-        and you.get("place_id") != "stage"
-        and "stage" in places
+        and event_place
+        and event_place in places
+        and you.get("place_id") != event_place
+        and (
+            event_name == "council_session"
+            or (event_name and random.random() < 0.55)
+        )
     ):
         return _san(
             {
                 "action": "walk",
-                "target_place": "stage",
+                "target_place": event_place,
                 "target_agent": None,
                 "item": None,
                 "utterance": None,
-                "thought": "Open stage is live — heading there to join town talk.",
+                "thought": (
+                    f"Heading to {event_place} for town event {event_name or 'now'}."
+                )[:180],
             }
         )
 
@@ -1169,6 +1179,12 @@ def decide_act(
             "target_place": None,
             "item": None,
         }
+
+    # Drop stale walk thoughts after arrival so they don't pollute speech fuel.
+    thought_now = str(you.get("thought") or "")
+    if you.get("status") != "walking" and thought_now.lower().startswith("walking to"):
+        you = {**you, "thought": None}
+        observe = {**observe, "you": you}
 
     # Prefer approaching a peer we have NOT recently spoken with.
     if in_sight and not nearby and not waiting and random.random() < 0.7:
