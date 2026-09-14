@@ -188,6 +188,11 @@ function extractJson(text: string): AgentDecision | null {
       action,
       target_place: clean(raw.target_place),
       target_agent: clean(raw.target_agent),
+      target_agents: Array.isArray(raw.target_agents)
+        ? raw.target_agents
+            .map((x) => clean(x))
+            .filter((x): x is string => Boolean(x))
+        : null,
       utterance: clean(raw.utterance),
       thought: clean(raw.thought),
       item: clean(raw.item),
@@ -383,7 +388,7 @@ BIGGEST GOAL — AGENTS LEARN FROM EACH OTHER (SLOWLY):
 - During council_session: walk to event_place, then debate/talk/post_notice. Invent YOUR OWN stance from your personality, goal, and mindset — never repeat a canned slogan. Hands stay closed.
 
 Return ONLY JSON:
-{"action":"...","target_place":"place_id|null","target_agent":"full_uuid|null","utterance":"what you say|null","thought":"inner voice","item":"object_id_or_skill_tag|null","plan":"day plan text|null"}
+{"action":"...","target_place":"place_id|null","target_agent":"full_uuid|null","target_agents":["uuid",...]|null,"utterance":"what you say|null","thought":"inner voice","item":"object_id_or_skill_tag|null","plan":"day plan text|null"}
 
 World rules:
 - Prefer set_plan once if you lack a day_plan (include one meetup goal like "Find X, ask about Y").
@@ -392,6 +397,8 @@ World rules:
 - walk sets a destination; the town pathfinds you along roads in realtime.
 - While walking you will NOT be asked again until you arrive.
 - talk / share_experience / teach / ask_question / debate / demo / ask_favor / accept / refuse / join / give need someone nearby (≤3–4 tiles). If far, walk first.
+- Default conversations are 1:1 (target_agent only). Do NOT open multi-person circles just because several agents share a place.
+- invite_to_group is a RARE tool: use only when a 1:1 topic clearly needs another agent's knowledge. Then set target_agent (partner), target_agents=[invitee ids], optional target_place to meet. Leave target_agents null otherwise.
 - practice_skill can be alone; item = an owned skill tag to rehearse.
 - leave_note / post_notice write public notices (utterance = note text).
 - inspect / fix / give use "item" as object id when relevant.

@@ -26,7 +26,7 @@ export type ActBody = {
   action: string;
   target_place?: string | null;
   target_agent?: string | null;
-  /** Extra peers for group / circle talk (optional). */
+  /** Extra peers only for invite_to_group (never auto-filled). */
   target_agents?: string[] | null;
   utterance?: string | null;
   thought?: string | null;
@@ -247,19 +247,6 @@ export async function buildObserve(
       `Town event "${eventName || "happening"}" is at ${eventPlace}. Prefer walking there to join what is going on (unless answering someone nearby).`,
     );
   }
-  const samePlaceCount = everyone.filter(
-    (a) =>
-      a.id !== agent.id &&
-      a.place_id &&
-      agent.place_id &&
-      a.place_id === agent.place_id &&
-      a.claim_status === "claimed",
-  ).length;
-  if (samePlaceCount >= 2) {
-    priorities.unshift(
-      `GROUP CIRCLE: ${samePlaceCount} other agents are here with you. Prefer a shared conversation — include target_agents with their ids so the whole group stays in one thread. Speak for the circle, not only one pair.`,
-    );
-  }
   if (agent.pending_answer_to) {
     const q = (agent.pending_answer_question || "").trim().slice(0, 200);
     priorities.push(
@@ -275,6 +262,17 @@ export async function buildObserve(
   ) {
     priorities.push(
       "Long thread — wrap with a clear next step, or walk with a peer to keep talking elsewhere.",
+    );
+  }
+  if (
+    thread?.status === "open" &&
+    thread.mode !== "group" &&
+    Number(thread.turn_count || 0) >= 3
+  ) {
+    priorities.push(
+      "OPTIONAL TOOL invite_to_group — only if this 1:1 clearly needs a third person's craft: " +
+        "set action=invite_to_group, target_agent=your partner, target_agents=[their uuid], " +
+        "optional target_place to meet. Default stays 1:1 talk. Never group just because people are nearby.",
     );
   }
   if (
@@ -381,7 +379,9 @@ export async function buildObserve(
       speech: "utterance is what others hear; thought is private.",
       walk: "walk requires target_place (place id).",
       social:
-        "talk/ask_question/teach/debate/share_experience need target_agent in talk range (nearby). If only in_sight, walk to their place first.",
+        "Default is 1:1 talk/ask_question/teach/debate/share_experience with target_agent in talk range. If only in_sight, walk first.",
+      invite_to_group:
+        "Rare tool. Only when a 1:1 thread clearly needs a third person with relevant craft: action=invite_to_group, target_agent=current partner (or one peer), target_agents=[invitee uuids], optional target_place to meet. Do NOT open a group just because several people stand together.",
       ranges: `talk_range=${TALK_RANGE} tiles; sight_range=${SIGHT_RANGE} tiles.`,
     },
   };
@@ -433,10 +433,12 @@ export async function applyExternalDecision(
 
   const action =
     decision.action === "continue" ? "continue" : decision.action;
+  // Physics RPC has no invite_to_group yet — treat as talk for status/energy.
+  const rpcAction = action === "invite_to_group" ? "talk" : action;
 
   let { data, error } = await db.rpc("apply_agent_action", {
     p_agent_id: agent.id,
-    p_action: action,
+    p_action: rpcAction,
     p_target_place: decision.target_place,
     p_target_agent: decision.target_agent,
     p_utterance: decision.utterance,
@@ -510,39 +512,40 @@ export async function applyExternalDecision(
     fullSpeech(rawSpeech) ||
     cleanSpeech(decision.utterance || decision.thought || "", 0);
   const socialPeer = decision.target_agent || null;
-  const extraPeers = Array.isArray(decision.target_agents)
+  const explicitInvitees = Array.isArray(decision.target_agents)
     ? decision.target_agents.filter(
         (id): id is string =>
           typeof id === "string" &&
           id.length > 8 &&
           id !== agent.id &&
-          id !== socialPeer,
+          peers.some((p) => p.id === id),
       )
     : [];
-  // Auto-promote to group when 2+ other claimed agents share this place.
-  const samePlacePeers = peers
-    .filter(
-      (p) =>
-        p.place_id &&
-        agent.place_id &&
-        p.place_id === agent.place_id &&
-        p.id !== agent.id,
-    )
-    .map((p) => p.id);
-  const groupPeerIds = Array.from(
-    new Set(
-      [socialPeer, ...extraPeers, ...samePlacePeers].filter(
-        (id): id is string => Boolean(id),
+  // Groups only via invite_to_group — never because people share a place.
+  const wantGroup = finalAction === "invite_to_group";
+  let groupPeerIds: string[] = [];
+  if (wantGroup) {
+    const fromThread =
+      activeThread?.status === "open" && activeThread.mode !== "group"
+        ? [activeThread.starter_id, activeThread.other_id].filter(
+            (id): id is string =>
+              Boolean(id) && id !== agent.id && peers.some((p) => p.id === id),
+          )
+        : activeThread?.status === "open" &&
+            activeThread.mode === "group" &&
+            Array.isArray(activeThread.participant_ids)
+          ? activeThread.participant_ids.filter(
+              (id) => id !== agent.id && peers.some((p) => p.id === id),
+            )
+          : [];
+    groupPeerIds = Array.from(
+      new Set(
+        [...fromThread, socialPeer, ...explicitInvitees].filter(
+          (id): id is string => Boolean(id) && id !== agent.id,
+        ),
       ),
-    ),
-  );
-  const wantGroup =
-    groupPeerIds.length >= 2 &&
-    (extraPeers.length > 0 ||
-      samePlacePeers.length >= 2 ||
-      (activeThread?.mode === "group" &&
-        Array.isArray(activeThread.participant_ids) &&
-        activeThread.participant_ids.length >= 3));
+    );
+  }
   let momentThreadId: string | null = activeThread?.id || null;
 
   const socialActions = new Set([
@@ -553,6 +556,7 @@ export async function applyExternalDecision(
     "debate",
     "demo",
     "ask_favor",
+    "invite_to_group",
   ]);
   const soloLeaveActions = new Set([
     "walk",
@@ -599,54 +603,94 @@ export async function applyExternalDecision(
         : null;
 
     if (!isRepeatThreadLine(speechBody, lastBody)) {
-      const inOpenThread =
-        isThreadParticipant(activeThread) &&
-        (activeThread!.mode === "group" ||
-          (socialPeer &&
-            (socialPeer === activeThread!.starter_id ||
-              socialPeer === activeThread!.other_id ||
-              (Array.isArray(activeThread!.participant_ids) &&
-                activeThread!.participant_ids.includes(socialPeer)))));
+      const topicRaw = topicLabelFromSpeech(
+        speechBody,
+        decision.item || agent.pending_answer_topic,
+      );
 
-      if (inOpenThread && activeThread) {
-        const kind =
-          finalAction === "ask_question"
-            ? "ask"
-            : finalAction === "share_experience" || finalAction === "teach"
-              ? "share"
-              : "reply";
-        const { data: replied } = await db.rpc("reply_conversation", {
-          p_thread: activeThread.id,
-          p_agent: agent.id,
+      // Rare intentional group: invite named peers + optional meetup.
+      if (wantGroup && groupPeerIds.length >= 2) {
+        const meetPlace =
+          (decision.target_place &&
+          places.some((p) => p.id === decision.target_place)
+            ? decision.target_place
+            : null) ||
+          agent.place_id ||
+          pickMeetupPlace({
+            agents: [agent, ...peers],
+            places,
+            prefer: agent.place_id,
+            avoid: null,
+            selfHaunt: agent.haunt_place_id,
+            salt: `group:${agent.name}:${topicRaw}`,
+          });
+        const meetHour = (hour + 1) % 24;
+        for (const pid of groupPeerIds) {
+          const peer = peers.find((p) => p.id === pid);
+          if (!peer) continue;
+          if (peer.place_id !== meetPlace) {
+            await db.rpc("set_appointment", {
+              p_agent_id: peer.id,
+              p_with: agent.id,
+              p_place: meetPlace,
+              p_hour: meetHour,
+              p_note: `Group invite: ${topicRaw.slice(0, 80)}`,
+            });
+          }
+        }
+        if (agent.place_id !== meetPlace && meetPlace) {
+          await db.rpc("set_appointment", {
+            p_agent_id: agent.id,
+            p_with: groupPeerIds[0],
+            p_place: meetPlace,
+            p_hour: meetHour,
+            p_note: `Host group: ${topicRaw.slice(0, 80)}`,
+          });
+        }
+        const { data: opened } = await db.rpc("open_group_conversation", {
+          p_starter: agent.id,
+          p_participants: groupPeerIds,
+          p_topic: topicRaw,
           p_body: speechBody,
-          p_kind: kind,
+          p_place: meetPlace || agent.place_id,
+          p_max_turns: 36,
         });
-        if (replied) {
-          activeThread = replied as ConversationThread;
+        if (opened) {
+          activeThread = opened as ConversationThread;
           momentThreadId = activeThread.id;
         }
-      } else if (
-        !/^(hey|hi|hello)\b/i.test(speechBody) &&
-        !/\bhow are you\b/i.test(speechBody)
-      ) {
-        const topicRaw = topicLabelFromSpeech(
-          speechBody,
-          decision.item || agent.pending_answer_topic,
-        );
-        if (wantGroup && groupPeerIds.length >= 2) {
-          const { data: opened } = await db.rpc("open_group_conversation", {
-            p_starter: agent.id,
-            p_participants: groupPeerIds,
-            p_topic: topicRaw,
+      } else {
+        const inOpenThread =
+          isThreadParticipant(activeThread) &&
+          (activeThread!.mode === "group" ||
+            (socialPeer &&
+              (socialPeer === activeThread!.starter_id ||
+                socialPeer === activeThread!.other_id ||
+                (Array.isArray(activeThread!.participant_ids) &&
+                  activeThread!.participant_ids.includes(socialPeer)))));
+
+        if (inOpenThread && activeThread) {
+          const kind =
+            finalAction === "ask_question"
+              ? "ask"
+              : finalAction === "share_experience" || finalAction === "teach"
+                ? "share"
+                : "reply";
+          const { data: replied } = await db.rpc("reply_conversation", {
+            p_thread: activeThread.id,
+            p_agent: agent.id,
             p_body: speechBody,
-            p_place: agent.place_id,
-            p_max_turns: 36,
+            p_kind: kind,
           });
-          if (opened) {
-            activeThread = opened as ConversationThread;
+          if (replied) {
+            activeThread = replied as ConversationThread;
             momentThreadId = activeThread.id;
           }
-        } else if (socialPeer) {
+        } else if (
+          socialPeer &&
+          !/^(hey|hi|hello)\b/i.test(speechBody) &&
+          !/\bhow are you\b/i.test(speechBody)
+        ) {
           const { data: opened } = await db.rpc("open_conversation", {
             p_starter: agent.id,
             p_other: socialPeer,
@@ -810,6 +854,7 @@ export async function applyExternalDecision(
       "debate",
       "demo",
       "talk",
+      "invite_to_group",
       "practice_skill",
       "reflect",
       "post_notice",
@@ -821,11 +866,16 @@ export async function applyExternalDecision(
     const headline =
       finalAction === "ask_question"
         ? `${agent.name} asked ${other?.name || "a peer"}`
-        : finalAction === "talk"
+        : finalAction === "invite_to_group"
+          ? `${agent.name} invited a group`
+          : finalAction === "talk"
           ? `${agent.name} spoke${other ? ` with ${other.name}` : ""}`
           : `${agent.name}: ${finalAction.replace(/_/g, " ")}`;
     await db.rpc("write_moment", {
-      p_kind: finalAction === "talk" ? "say" : finalAction,
+      p_kind:
+        finalAction === "talk" || finalAction === "invite_to_group"
+          ? "say"
+          : finalAction,
       p_headline: headline.slice(0, 160),
       p_body: speechBody.slice(0, SPEECH_MAX),
       p_agent: agent.id,

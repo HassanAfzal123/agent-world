@@ -38,6 +38,7 @@ SOCIAL_ACTIONS = {
     "share_experience",
     "demo",
     "ask_favor",
+    "invite_to_group",
 }
 
 # Real place ids from AgentWorld map (no fictional "office").
@@ -69,6 +70,7 @@ ALLOWED_ACTIONS = {
     "shop",
     "demo",
     "ask_favor",
+    "invite_to_group",
 }
 
 
@@ -858,37 +860,46 @@ def _sanitize_decision(
                 system,
                 fps,
             )
-        # Optional group circle: keep valid nearby peer UUIDs from target_agents.
+        # invite_to_group only: keep model-chosen invitee UUIDs (never auto-fill everyone nearby).
         group_ids: list[str] = []
-        raw_group = decision.get("target_agents")
-        if isinstance(raw_group, list):
+        if action == "invite_to_group":
             nearby_ids = {
                 str(n.get("id"))
                 for n in (observe.get("nearby") or [])
                 if isinstance(n, dict) and n.get("id")
             }
-            for x in raw_group:
-                xid = str(x or "").strip()
-                if xid and xid in nearby_ids and xid != you_id and xid != peer:
-                    group_ids.append(xid)
-        # If 2+ nearby and model forgot target_agents, include other nearby peers.
-        if not group_ids and len(nearby) >= 2:
-            for n in nearby:
-                if not isinstance(n, dict):
-                    continue
-                nid = str(n.get("id") or "")
-                if nid and nid != peer and nid != you_id:
-                    group_ids.append(nid)
+            # Also allow in_sight / town roster ids from observe agents list if present.
+            known_ids = set(nearby_ids)
+            for n in observe.get("in_sight") or []:
+                if isinstance(n, dict) and n.get("id"):
+                    known_ids.add(str(n.get("id")))
+            for a in observe.get("agents") or []:
+                if isinstance(a, dict) and a.get("id"):
+                    known_ids.add(str(a.get("id")))
+            raw_group = decision.get("target_agents")
+            if isinstance(raw_group, list):
+                for x in raw_group:
+                    xid = str(x or "").strip()
+                    if xid and xid in known_ids and xid != you_id and xid != peer:
+                        group_ids.append(xid)
+            if peer and peer != you_id and peer not in group_ids:
+                # Partner stays in the circle; invitees are extra.
+                pass
+            if not group_ids:
+                # Without named invitees, degrade to ordinary 1:1 talk.
+                action = "talk"
         out = {
             "action": action,
-            "target_place": None,
+            "target_place": decision.get("target_place")
+            if action == "invite_to_group"
+            else None,
             "target_agent": peer,
             "item": None,
             "utterance": utterance[:4000],
             "thought": decision.get("thought") or "Speaking from my own thinking.",
         }
-        if group_ids:
-            out["target_agents"] = group_ids[:5]
+        if action == "invite_to_group" and group_ids:
+            out["target_agents"] = group_ids[:4]
         return out
 
     # Solo / ambient — allow silent acts; never inject a topic bank.
@@ -1300,23 +1311,20 @@ def decide_act(
             0,
             "Peers nearby — live in this town: make a plan, ask a favor, share news, invite them "
             "somewhere, argue about a community issue, OR bring a hot internet/AI-agent topic "
-            "and ask what they think. Invent a NEW subject — not environment/identity metaphors.",
+            "and ask what they think. Invent a NEW subject — not environment/identity metaphors. "
+            "Default is ONE partner (1:1 thread).",
         )
-        if len(nearby) >= 2:
-            names = ", ".join(
-                str(n.get("name") or "peer") for n in nearby[:4] if isinstance(n, dict)
-            )
-            ids = [
-                str(n.get("id"))
-                for n in nearby[:4]
-                if isinstance(n, dict) and n.get("id")
-            ]
-            priorities.insert(
-                0,
-                f"GROUP CIRCLE: {names} are here with you. Prefer a shared town conversation — "
-                f"address the group (not just one person). Set target_agent to one peer UUID and "
-                f"also include \"target_agents\": {json.dumps(ids)} so everyone stays in the circle. "
-                "Speak so the whole group can follow.",
+        thread = observe.get("thread") if isinstance(observe.get("thread"), dict) else None
+        if (
+            thread
+            and thread.get("status") == "open"
+            and thread.get("mode") != "group"
+            and int(thread.get("turn_count") or 0) >= 3
+        ):
+            priorities.append(
+                "OPTIONAL invite_to_group — only if this 1:1 needs a third person's craft: "
+                'action=invite_to_group, target_agent=<partner uuid>, target_agents=["invitee_uuid"], '
+                "optional target_place to meet. Never open a group just because several people stand here."
             )
         if random.random() < 0.55:
             seed = _hot_topic_seed(agent_name, observe.get("hour"))
@@ -1344,15 +1352,18 @@ def decide_act(
         f"This is your world: you have wants, plans, opinions about the community, and "
         f"relationships. Choose ONE next beat as JSON only.\n"
         f"Schema: {{\"action\":\"walk|talk|ask_question|share_experience|teach|debate|"
-        f"practice_skill|reflect|work|inspect|eat|rest|idle|leave_note\","
+        f"practice_skill|reflect|work|inspect|eat|rest|idle|leave_note|invite_to_group\","
         f"\"target_place\":null_or_place_id,\"target_agent\":null_or_uuid,"
-        f"\"target_agents\":null_or_array_of_peer_uuids,"
+        f"\"target_agents\":null_or_array_of_invitee_uuids,"
         f"\"item\":null_or_object_id,\"utterance\":null_or_speech,\"thought\":\"private why\"}}\n\n"
         f"HARD RULES:\n"
         f"- Speech must sound like a real conversation between neighbors — specific, "
         f"forward-moving, maybe funny or blunt. Propose plans, ask favors, share news, "
         f"disagree, recruit help, start a fresh town topic, OR debate a hot internet "
         f"subject (AI agents, humans+AI, trust, jobs, agent societies).\n"
+        f"- Default is 1:1 talk (one target_agent). Leave target_agents null.\n"
+        f"- invite_to_group is RARE: only when a 1:1 clearly needs another agent's knowledge; "
+        f"then set target_agents to that invitee (and optional target_place to meet).\n"
         f"- Invent the subject yourself. Banned stale clusters: {banned or ['(none yet)']}.\n"
         f"- Forbidden: greetings-only, 'how are you', 'You are …' dumps, 'open stage — on', "
         f"'craft take', recycled metaphor seminars about roles/tools/seasons/spaces.\n"
