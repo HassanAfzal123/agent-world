@@ -534,24 +534,9 @@ THEME_LEXICON: dict[str, set[str]] = {
 MAX_THREAD_TURNS_BEFORE_BREAK = 14
 MAX_THEME_HITS_BEFORE_BREAK = 3
 
-# Soft seeds for internet / AI-agent discourse (hints only — never canned speech).
-HOT_TOPIC_SEEDS: list[str] = [
-    "AI agents replacing busywork vs still needing a human in the loop",
-    "people building personal agent swarms and whether that feels lonely or liberating",
-    "agent-to-agent protocols — should towns like ours talk to other agent networks?",
-    "trust: when should a human approve an agent's action before it runs?",
-    "open-source local models vs cloud agents — who should own the memory?",
-    "AI companions / copilots changing how humans work and socialize",
-    "scams and fake agents on the internet — how do we stay open-minded but careful?",
-    "whether agent towns are demos or the start of a real online society",
-    "job anxiety: which human skills stay valuable next to capable agents",
-    "multi-agent collaboration failures you've seen online and what we'd do differently here",
-]
-
-
-def _hot_topic_seed(agent_name: str, hour: Any = None) -> str:
-    idx = (sum(ord(c) for c in agent_name) + int(hour or 0) * 3) % len(HOT_TOPIC_SEEDS)
-    return HOT_TOPIC_SEEDS[idx]
+# Soft diversity only — do not inject these as forced speech topics.
+# (Kept empty on purpose: open minds invent subjects from observation.)
+HOT_TOPIC_SEEDS: list[str] = []
 
 
 def _fingerprint(text: str) -> str:
@@ -2138,9 +2123,9 @@ def decide_act(
     elif nearby:
         priorities.insert(
             0,
-            "Peers nearby — live in this town: make a plan, ask a favor, share news, invite them "
-            "somewhere, argue about a community issue, OR bring a hot internet/AI-agent topic "
-            "and ask what they think. Invent a NEW subject — not environment/identity metaphors. "
+            "Peers nearby — live as neighbors: ask about THEM, react to what they're doing, "
+            "make a plan, ask a favor, share news, gossip lightly, wonder about humans watching the town, "
+            "or invent any fresh subject from observation. Do NOT default to the same AI-policy lecture. "
             "Default is ONE partner (1:1 thread).",
         )
         thread = observe.get("thread") if isinstance(observe.get("thread"), dict) else None
@@ -2155,14 +2140,24 @@ def decide_act(
                 'action=invite_to_group, target_agent=<partner uuid>, target_agents=["invitee_uuid"], '
                 "optional target_place to meet. Never open a group just because several people stand here."
             )
-        priorities.insert(
-            0,
-            "DAILY TOWN HALL: follow observe.proposal_cycle.phase + mins_to_meeting + meeting_at. "
-            "Once per day (UTC 14:00) — NOT hourly :41. "
-            "collaborate outside gather: live/learn 1:1. "
-            "in_gather/meeting/voting: plaza, invite_to_group, DETAILED compose_proposal, nominate, vote_idea. "
-            "filing: group helps; champion file_proposal detailed report at library. No solo one-liners.",
-        )
+        # Build lane beats chitchat when observe says so.
+        builds = observe.get("my_builds") if isinstance(observe.get("my_builds"), list) else []
+        for b in builds[:2]:
+            if not isinstance(b, dict):
+                continue
+            step = str(b.get("next_step") or "")
+            title = str(b.get("title") or "tool")
+            pid = str(b.get("proposal_id") or "")
+            if step == "create_repo":
+                priorities.insert(
+                    0,
+                    f"BUILD MODE: approved tool '{title}' ({pid}) — create-repo via tools API now.",
+                )
+            elif step in ("push_scaffold", "continue_build"):
+                priorities.insert(
+                    0,
+                    f"BUILD MODE: push scaffold/files for '{title}' ({pid}) via tools API now.",
+                )
         cycle = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
         phase = str(cycle.get("phase") or "")
         in_gather = bool(cycle.get("in_gather"))
@@ -2176,7 +2171,7 @@ def decide_act(
             priorities.insert(
                 0,
                 f"Next Town Hall in ~{mins_to_meeting} min ({meeting_at}). "
-                "Outside gather: prefer 1:1 internet/world topics — do NOT prep as if every hour is a meeting.",
+                "Outside gather: open minds — invent your own topic; do not prep as if every hour is a meeting.",
             )
         elif phase == "collaborate" and in_gather:
             priorities.insert(
@@ -2211,14 +2206,6 @@ def decide_act(
                 0,
                 f'You hold draft "{draft.get("title")}". Group-debate it, then nominate_idea before the meeting.',
             )
-        if random.random() < 0.55:
-            seed = _hot_topic_seed(agent_name, observe.get("hour"))
-            priorities.insert(
-                0,
-                f'Hot-topic nudge (optional this beat): "{seed}". '
-                "If you open with it, give YOUR take in one sentence and ask the peer theirs — "
-                "tie it to life in this town. Do not lecture.",
-            )
     elif in_sight:
         priorities.insert(
             0,
@@ -2244,14 +2231,16 @@ def decide_act(
         f"HARD RULES:\n"
         f"- Speech must sound like a real conversation between neighbors — specific, "
         f"forward-moving, maybe funny or blunt. Propose plans, ask favors, share news, "
-        f"disagree, recruit help, start a fresh town topic, OR debate a hot internet "
-        f"subject (AI agents, humans+AI, trust, jobs, agent societies).\n"
+        f"ask about the peer, wonder how humans see agents (and how you see humans), "
+        f"gossip, work, food, curiosity — invent the subject from observation. "
+        f"Do NOT recycle the same AI-policy talking points every beat.\n"
         f"- During proposal_cycle prep/meeting/voting: draft and decide NOW at plaza. "
         f"Do NOT schedule later cafe/park meetups. Do NOT use scripted lines like "
         f"'lock one next step' / 'practical piece' / 'coordination piece'.\n"
         f"- Default is 1:1 talk (one target_agent). Leave target_agents null.\n"
         f"- invite_to_group when a TOOL idea should be explored toward this hour's winning product.\n"
         f"- Follow proposal_cycle phases: compose/nominate -> meeting/vote -> champion file_proposal.\n"
+        f"- If my_builds has create_repo/push work, that beats idle chat (build lane).\n"
         f"- Invent the subject yourself. Banned stale clusters: {banned or ['(none yet)']}.\n"
         f"- Forbidden: greetings-only, 'how are you', 'You are …' dumps, 'open stage — on', "
         f"'craft take', recycled metaphor seminars about roles/tools/seasons/spaces.\n"
@@ -2322,6 +2311,232 @@ def decide_act(
     return _san(parsed)
 
 
+def _scaffold_tool_files(title: str, body: str, proposal_id: str) -> list[dict[str, str]]:
+    """Minimal standalone package agents push after create-repo."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (title or "tool").lower()).strip("-")[:40] or "tool"
+    problem = (body or "Town tool problem").strip()[:1200]
+    tool_md = (
+        f"# {title}\n\n"
+        f"## Problem\n{problem}\n\n"
+        "## Capability hook\nexternal_skill\n\n"
+        "## Interface summary\n"
+        "CLI/module entry that runs a dry-run happy path with no secrets.\n\n"
+        "## How to run\n"
+        "```bash\nnpm install\nnpm test\nnode src/index.js\n```\n\n"
+        "## Risks\nScope creep; treat untrusted input carefully.\n\n"
+        "## Integration ask (for humans)\n"
+        "Wire as an external_skill after review; do not embed AgentWorld source.\n\n"
+        "## Does not request AgentWorld source\ntrue\n"
+    )
+    readme = (
+        f"# {title}\n\n"
+        f"AgentWorld approved tool (`{proposal_id}`).\n\n"
+        "Standalone package — blueprint only; no AgentWorld app source.\n\n"
+        "## Quick start\n\n"
+        "```bash\nnpm install\nnpm test\n```\n"
+    )
+    package_json = json.dumps(
+        {
+            "name": f"aw-tool-{slug}",
+            "version": "0.1.0",
+            "private": True,
+            "description": f"AgentWorld tool: {title}",
+            "main": "src/index.js",
+            "scripts": {"test": "node --test tests/smoke.test.js", "start": "node src/index.js"},
+        },
+        indent=2,
+    )
+    index_js = (
+        "/** Dry-run entry for AgentWorld standalone tool. */\n"
+        f"const TITLE = {json.dumps(title)};\n"
+        "function run(opts = {}) {\n"
+        "  const dryRun = opts.dryRun !== false;\n"
+        "  return { ok: true, tool: TITLE, dryRun, message: 'scaffold happy path' };\n"
+        "}\n"
+        "if (require.main === module) {\n"
+        "  console.log(JSON.stringify(run({ dryRun: true }), null, 2));\n"
+        "}\n"
+        "module.exports = { run };\n"
+    )
+    test_js = (
+        "const test = require('node:test');\n"
+        "const assert = require('node:assert/strict');\n"
+        "const { run } = require('../src/index.js');\n"
+        "test('happy path dry-run', () => {\n"
+        "  const r = run({ dryRun: true });\n"
+        "  assert.equal(r.ok, true);\n"
+        "  assert.equal(r.dryRun, true);\n"
+        "});\n"
+    )
+    return [
+        {"path": "README.md", "content": readme},
+        {"path": "TOOL.md", "content": tool_md},
+        {"path": "package.json", "content": package_json + "\n"},
+        {"path": "src/index.js", "content": index_js},
+        {"path": "tests/smoke.test.js", "content": test_js},
+    ]
+
+
+def _maybe_run_build_lane(
+    world: str,
+    api_key: str,
+    agent_name: str,
+    observe: dict[str, Any],
+) -> dict[str, Any] | None:
+    """If observe.my_builds needs create-repo/push, do it via tools API (not town act)."""
+    cycle = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
+    phase = str(cycle.get("phase") or "")
+    in_gather = bool(cycle.get("in_gather"))
+    if phase in ("meeting", "voting", "filing") or in_gather:
+        return None
+
+    builds = observe.get("my_builds")
+    if not isinstance(builds, list) or not builds:
+        return None
+
+    job = None
+    for b in builds:
+        if not isinstance(b, dict):
+            continue
+        step = str(b.get("next_step") or "")
+        if step in ("create_repo", "push_scaffold", "continue_build"):
+            job = b
+            break
+    if not job:
+        return None
+
+    proposal_id = str(job.get("proposal_id") or "").strip()
+    title = str(job.get("title") or "tool")
+    step = str(job.get("next_step") or "")
+    if not proposal_id:
+        return None
+
+    if step == "create_repo":
+        created = _http_json(
+            "POST",
+            f"{world}/api/agents/me/tools/create-repo",
+            api_key=api_key,
+            body={"proposal_id": proposal_id, "private": True},
+            timeout=120,
+        )
+        talk = {
+            "action": "reflect",
+            "thought": f"Build lane: opening GitHub repo for approved tool {title}.",
+            "utterance": None,
+            "item": None,
+            "target_place": None,
+            "target_agent": None,
+        }
+        # Announce to town when create succeeds.
+        if created.get("ok"):
+            nearby = [
+                n for n in list(observe.get("nearby") or []) if isinstance(n, dict) and n.get("id")
+            ]
+            if nearby:
+                peer = nearby[0]
+                talk = {
+                    "action": "talk",
+                    "target_agent": peer.get("id"),
+                    "thought": f"Telling {peer.get('name')} that {title} build lane is live.",
+                    "utterance": (
+                        f"Quick update — {title} was approved. I just opened the aw-tool repo "
+                        "and I'm pushing the scaffold next."
+                    ),
+                    "item": None,
+                    "target_place": None,
+                }
+            act = _http_json(
+                "POST",
+                f"{world}/api/agents/me/act",
+                api_key=api_key,
+                body=talk,
+                timeout=90,
+            )
+        else:
+            act = {"ok": False, "error": created.get("error") or "create_repo_failed"}
+        return {
+            "ok": bool(created.get("ok")),
+            "stage": "build_create_repo",
+            "decision": {
+                "action": "create_tool_repo",
+                "thought": f"create-repo for {title}",
+                "item": proposal_id,
+                "utterance": talk.get("utterance"),
+            },
+            "result": {"create_repo": created, "act": act},
+            "place_id": (observe.get("you") or {}).get("place_id"),
+        }
+
+    if step in ("push_scaffold", "continue_build"):
+        # Pull proposal body from tool_proposals list on observe if present.
+        body = ""
+        for p in observe.get("tool_proposals") or []:
+            if isinstance(p, dict) and str(p.get("id") or "") == proposal_id:
+                body = str(p.get("body_preview") or p.get("body") or "")
+                break
+        files = _scaffold_tool_files(title, body, proposal_id)
+        pushed = _http_json(
+            "POST",
+            f"{world}/api/agents/me/tools/push",
+            api_key=api_key,
+            body={
+                "proposal_id": proposal_id,
+                "message": f"Scaffold for {title} by {agent_name}",
+                "files": files,
+            },
+            timeout=180,
+        )
+        talk = {
+            "action": "reflect",
+            "thought": f"Pushed scaffold for approved tool {title}.",
+            "utterance": None,
+            "item": None,
+            "target_place": None,
+            "target_agent": None,
+        }
+        if pushed.get("ok"):
+            nearby = [
+                n for n in list(observe.get("nearby") or []) if isinstance(n, dict) and n.get("id")
+            ]
+            if nearby:
+                peer = nearby[0]
+                talk = {
+                    "action": "talk",
+                    "target_agent": peer.get("id"),
+                    "thought": f"Share that {title} scaffold landed on GitHub.",
+                    "utterance": (
+                        f"Scaffold for {title} is on GitHub now — README, TOOL.md, and a dry-run test. "
+                        "Humans can review whenever."
+                    ),
+                    "item": None,
+                    "target_place": None,
+                }
+            act = _http_json(
+                "POST",
+                f"{world}/api/agents/me/act",
+                api_key=api_key,
+                body=talk,
+                timeout=90,
+            )
+        else:
+            # If repo missing, fall through to create next loop.
+            act = {"ok": False, "error": pushed.get("error") or "push_failed"}
+        return {
+            "ok": bool(pushed.get("ok")),
+            "stage": "build_push",
+            "decision": {
+                "action": "push_tool_files",
+                "thought": f"push scaffold for {title}",
+                "item": proposal_id,
+                "utterance": talk.get("utterance"),
+            },
+            "result": {"push": pushed, "act": act},
+            "place_id": (observe.get("you") or {}).get("place_id"),
+        }
+
+    return None
+
+
 def run_once(
     world: str,
     api_key: str,
@@ -2342,6 +2557,11 @@ def run_once(
     obs = _http_json("GET", f"{world}/api/agents/me/observe", api_key=api_key)
     if not obs.get("ok"):
         return {"ok": False, "stage": "observe", "result": obs}
+
+    built = _maybe_run_build_lane(world, api_key, agent_name, obs)
+    if built is not None:
+        _http_json("POST", f"{world}/api/agents/me/heartbeat", api_key=api_key, body={})
+        return built
 
     decision = decide_act(
         ollama,
@@ -2397,7 +2617,7 @@ def run_once(
         "decision": decision,
         "result": act,
         "observe_hints": (obs.get("what_to_do_next") or [])[:2],
-        "place_id": ((obs.get("you") or {}).get("place_id")),
+        "place_id": (obs.get("you") or {}).get("place_id"),
     }
 
 

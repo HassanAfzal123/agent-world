@@ -118,3 +118,75 @@ export function assertSafeToolPaths(paths: string[]): string | null {
   }
   return null;
 }
+
+export type AgentBuildNextStep =
+  | "create_repo"
+  | "push_scaffold"
+  | "continue_build"
+  | "done";
+
+export type AgentBuildItem = {
+  proposal_id: string;
+  title: string;
+  build_status: string;
+  github_repo: string | null;
+  github_url: string | null;
+  next_step: AgentBuildNextStep;
+  brief_status: string;
+};
+
+export function nextBuildStep(proposal: {
+  github_repo?: string | null;
+  build_status?: string | null;
+}): AgentBuildNextStep {
+  const status = String(proposal.build_status || "unlocked").toLowerCase();
+  if (status === "repo_ready" || status === "done" || status === "shipped") {
+    return "done";
+  }
+  if (!proposal.github_repo) {
+    return "create_repo";
+  }
+  if (
+    status === "repo_created" ||
+    status === "unlocked" ||
+    status === "pushing" ||
+    status === ""
+  ) {
+    return "push_scaffold";
+  }
+  return "continue_build";
+}
+
+/** Approved proposals this agent may build (filer or participant). */
+export async function listAgentBuilds(
+  db: SupabaseClient,
+  agentId: string,
+): Promise<AgentBuildItem[]> {
+  const { data, error } = await db
+    .from("tool_proposals")
+    .select(
+      "id, title, body, status, filed_by, participant_ids, decision_note, github_repo, github_url, build_status",
+    )
+    .eq("status", "approved")
+    .order("decided_at", { ascending: false })
+    .limit(20);
+
+  if (error || !data?.length) return [];
+
+  const out: AgentBuildItem[] = [];
+  for (const row of data as ToolProposalRow[]) {
+    if (!agentMayBuild(agentId, row).ok) continue;
+    const brief = createBuildBrief(row as ProposalRecord);
+    const step = nextBuildStep(row);
+    out.push({
+      proposal_id: row.id,
+      title: row.title,
+      build_status: row.build_status || brief.status,
+      github_repo: row.github_repo || null,
+      github_url: row.github_url || null,
+      next_step: step,
+      brief_status: brief.status,
+    });
+  }
+  return out;
+}

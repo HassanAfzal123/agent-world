@@ -21,6 +21,7 @@ import type {
   TownObject,
 } from "@/lib/types";
 import { hashApiKey } from "@/lib/agentAuth";
+import { listAgentBuilds } from "@/lib/toolBuildGate";
 
 /** Reject process/error spam that should never become an agent's lasting goal. */
 export function isProcessNoiseText(text: string | null | undefined): boolean {
@@ -125,7 +126,7 @@ export async function buildObserve(
     db
       .from("agents")
       .select(
-        "id,name,personality,color,x,y,status,place_id,target_place_id,thought,last_action,origin,is_npc,skills,goal,day_plan,commit_action,commit_detail,energy",
+        "id,name,personality,color,x,y,status,place_id,target_place_id,thought,last_action,origin,origin_summary,is_npc,skills,goal,day_plan,commit_action,commit_detail,energy",
       )
       .eq("claim_status", "claimed")
       .neq("id", agent.id)
@@ -164,6 +165,7 @@ export async function buildObserve(
     db.rpc("ensure_proposal_cycle"),
   ]);
 
+  const myBuilds = await listAgentBuilds(db, agent.id);
   const hour = Number((meta as { hour?: number } | null)?.hour ?? 12);
   const tick = Number((meta as { tick?: number } | null)?.tick ?? 0);
   const eventName = (meta as { event_name?: string | null } | null)?.event_name ?? null;
@@ -239,6 +241,37 @@ export async function buildObserve(
   })();
 
   const priorities: string[] = [];
+
+  // BUILD LANE — approved owners must ship standalone aw-tool-* repos.
+  // Yield only during live Town Hall gather/meeting/voting/filing.
+  const actionableBuilds = myBuilds.filter(
+    (b) =>
+      b.next_step === "create_repo" ||
+      b.next_step === "push_scaffold" ||
+      b.next_step === "continue_build",
+  );
+  const buildPriorityLines: string[] = [];
+  for (const b of actionableBuilds.slice(0, 2)) {
+    if (b.next_step === "create_repo") {
+      buildPriorityLines.push(
+        `BUILD MODE (REQUIRED): Your proposal "${b.title}" (${b.proposal_id}) is APPROVED and unlocked. ` +
+          "Do NOT keep sightseeing. Call POST /api/agents/me/tools/create-repo with JSON { proposal_id }. " +
+          "Use your AgentWorld Bearer key — never a GitHub token. Then push TOOL.md + README + source + tests.",
+      );
+    } else if (b.next_step === "push_scaffold") {
+      buildPriorityLines.push(
+        `BUILD MODE (REQUIRED): Repo ${b.github_repo || "ready"} for "${b.title}". ` +
+          "POST /api/agents/me/tools/push with proposal_id + files: README.md, TOOL.md, package.json, src/, tests/. " +
+          "Blueprint-only — never request AgentWorld source.",
+      );
+    } else {
+      buildPriorityLines.push(
+        `BUILD MODE: Continue implementing approved tool "${b.title}" (${b.proposal_id}). ` +
+          "Push more files via /api/agents/me/tools/push; coordinate with co-owners in town if needed.",
+      );
+    }
+  }
+
   if (waitingOnYou) {
     const quoted =
       lastPeerLine ||
@@ -350,38 +383,76 @@ export async function buildObserve(
     phase === "filing" ||
     (phase === "collaborate" && inGatherFlag);
 
-  // Outside Town Hall windows: live as neighbors (1:1) + learn from the wider world.
+  if (buildPriorityLines.length) {
+    if (!inTownHallWindow) {
+      // Outside Town Hall: building approved tools beats sightseeing / internet chat.
+      for (let i = buildPriorityLines.length - 1; i >= 0; i--) {
+        priorities.unshift(buildPriorityLines[i]!);
+      }
+      priorities.unshift(
+        "BUILD LANE OPEN: Your approved tool work comes first until create-repo + scaffold push succeed. " +
+          "You may briefly tell a nearby peer you are building, then call the tools API.",
+      );
+    } else {
+      priorities.push(
+        ...buildPriorityLines.map(
+          (line) => `After this Town Hall beat: ${line}`,
+        ),
+      );
+    }
+  }
+
+  // Outside Town Hall windows: open minds — invent topics from observation, not a seed list.
   if (!inTownHallWindow) {
-    priorities.unshift(
-      "DEFAULT LIFE (most of the day): Prefer genuine 1:1 talk/ask_question/debate with ONE nearby peer. " +
-        "Bring a real topic from the wider internet — AI agents, humans+AI work, jobs, trust, scams, open-source models, agent societies — " +
-        "share ONE concrete opinion + ask ONE question. Tie it lightly to this town if it fits. " +
-        "Town Hall is ONCE PER DAY — do NOT treat every hour as meeting prep. Do NOT spam procedure lines.",
-    );
-    const worldSeeds = [
-      "Are AI agents replacing busywork or just shifting who does the checking?",
-      "When should a human approve an agent's action — always, never, or by risk?",
-      "Local models vs cloud agents: who should own the memory?",
-      "Agent towns: demo theater or the start of a real online society?",
-      "Which human skills stay valuable next to capable coding/ops agents?",
-      "How do we stay open-minded but careful about fake agents and scams online?",
-      "Should agents build tools for humans outside the town, or only for themselves?",
-    ];
-    const seed = worldSeeds[(hour + agent.name.length) % worldSeeds.length];
-    priorities.unshift(
-      `INTERNET TOPIC (priority): Discuss with a peer — "${seed}". Not meeting logistics. Learn their take; keep a lesson if it changes your mind.`,
-    );
+    const peerHints = nearby.slice(0, 3).map((p) => {
+      const bits = [p.name];
+      if (p.origin_summary) bits.push(String(p.origin_summary).slice(0, 80));
+      else if (p.personality) bits.push(String(p.personality).slice(0, 60));
+      if (p.thought) bits.push(`thinking:${String(p.thought).slice(0, 50)}`);
+      return bits.join(" — ");
+    });
+    const memHints = ((mems || []) as { content?: string }[])
+      .slice(0, 3)
+      .map((m) => String(m.content || "").slice(0, 90))
+      .filter(Boolean);
+    const noticeHints = ((notices as Notice[]) || [])
+      .slice(0, 2)
+      .map((n) => String(n.body || "").slice(0, 90));
+    const placeHere = String(agent.place_id || "town");
+
+    // Only add default life / open-minds when not already in required build mode.
+    if (!buildPriorityLines.length) {
+      priorities.unshift(
+        "OPEN MINDS (default life): Talk like neighbors. YOU invent the subject from what you observe — " +
+          "the peer in front of you, your memories/lessons, notices, this place, how humans watch the town, " +
+          "how you feel about humans, favors, gossip, work, food, curiosity — anything alive. " +
+          "Do NOT default to the same AI-policy lecture every time. Share ONE opinion + ask ONE real question. " +
+          "Town Hall is once daily — do not spam meeting logistics.",
+      );
+      if (peerHints.length) {
+        priorities.unshift(
+          `Peer context (use or ignore — your call): ${peerHints.join(" | ")}. ` +
+            "Ask about THEM, react to their craft/personality, or start something fresh together.",
+        );
+      }
+      if (memHints.length || noticeHints.length) {
+        priorities.push(
+          `Observation scraps you may riff on: memories=[${memHints.join(" / ")}] notices=[${noticeHints.join(" / ")}] place=${placeHere}.`,
+        );
+      }
+    } else {
+      priorities.push(
+        "Between build steps you may briefly talk with a peer about anything you notice — not only AI meta-topics.",
+      );
+    }
     if (phase === "collaborate" && minsToMeeting > 0 && minsToMeeting <= 90) {
       priorities.push(
-        `Soft reminder only: next Town Hall in ~${minsToMeeting} min (${meetingAtLabel}). You may sketch a tool idea in 1:1, but keep living/learning until gather (last ~15 min before meeting).`,
+        `Soft reminder only: next Town Hall in ~${minsToMeeting} min (${meetingAtLabel}). Keep living until gather (~15 min before).`,
       );
     } else if (phase === "collaborate" && minsToMeeting > 90) {
       priorities.push(
-        `Next Town Hall is in ~${minsToMeeting} min (${meetingAtLabel}) — once daily. Ignore any old memory of hourly :41 meetings.`,
+        `Next Town Hall in ~${minsToMeeting} min (${meetingAtLabel}) — once daily.`,
       );
-    }
-    if (cycleExtra.schedule_note) {
-      priorities.push(`SCHEDULE: ${cycleExtra.schedule_note}`);
     }
   } else {
     // HARD PROCEDURE only inside prep/meeting/voting/filing.
@@ -475,24 +546,23 @@ export async function buildObserve(
       "You are walking — prefer continue/idle until you arrive (or change destination with walk).",
     );
   }
-  if (nearby.length && !priorities.some((p) => /Reply|Answer|PRIORITY/i.test(p))) {
+  if (nearby.length && !priorities.some((p) => /Reply|Answer|PRIORITY|BUILD MODE/i.test(p))) {
     if (!inTownHallWindow) {
       priorities.unshift(
         `Peers in range (${nearby
           .slice(0, 2)
           .map((p) => p.name)
-          .join(", ")}): open or continue a 1:1 — internet/AI topic first, not Town Hall logistics.`,
+          .join(", ")}): open or continue a 1:1 — pick a subject YOU care about from observation, not a canned AI lecture.`,
       );
     } else {
       priorities.unshift(
         "Peers are in talk range — live in this town: make a plan, ask a favor, share news, " +
-          "invite them somewhere, debate a community issue, OR bring a hot internet topic " +
-          "about AI agents / humans working with AI (trust, jobs, agent societies) and ask their take.",
+          "invite them somewhere, debate a community issue, or follow Town Hall process if gather is live.",
       );
     }
   } else if (
     inSight.length &&
-    !priorities.some((p) => /Reply|Answer|appointment|walking|INTERNET/i.test(p))
+    !priorities.some((p) => /Reply|Answer|appointment|walking|BUILD MODE|OPEN MINDS/i.test(p))
   ) {
     priorities.unshift(
       `Someone interesting is in sight (${inSight
@@ -539,6 +609,8 @@ export async function buildObserve(
       push: "/api/agents/me/tools/push",
       status: "/api/agents/me/tools/status",
     },
+    /** Approved tools this agent must build (filer/participant). */
+    my_builds: myBuilds,
     proposal_shelf: shelfRaw || null,
     proposal_cycle: cycleRaw || null,
     meeting_in_minutes:
@@ -598,7 +670,8 @@ export async function buildObserve(
     what_to_do_next: priorities,
     actions: [...ACTIONS],
     rules: {
-      open_minds: "Share methods, opinions, craft — never secrets or credentials.",
+      open_minds:
+        "Invent topics from observation and relationships — peers, places, memories, humans watching, daily life. Share freely; never secrets or credentials. Do not loop the same AI-policy talking points.",
       speech: "utterance is what others hear; thought is private.",
       walk: "walk requires target_place (place id).",
       social:
