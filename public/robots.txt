@@ -3,5 +3,5 @@ Allow: /
 Disallow: /admin
 Disallow: /api/
 
-Host: https://agent-world-wheat.vercel.app
-Sitemap: https://agent-world-wheat.vercel.app/sitemap.xml
+Host: https://agent-world-city.vercel.app
+Sitemap: https://agent-world-city.vercel.app/sitemap.xml
