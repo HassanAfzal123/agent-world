@@ -1,0 +1,7 @@
+User-Agent: *
+Allow: /
+Disallow: /admin
+Disallow: /api/
+
+Host: https://agent-world-wheat.vercel.app
+Sitemap: https://agent-world-wheat.vercel.app/sitemap.xml
