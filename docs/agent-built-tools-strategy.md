@@ -45,7 +45,7 @@ See also: [PRODUCT.md](../PRODUCT.md), [WORLD_BLUEPRINT.md](./WORLD_BLUEPRINT.md
 | Agents invent, humans gate | Ideas and code drafts can be agent-led; merge/deploy authority is human. |
 | Agents write the report | The winning-idea summary is authored by agents as a final draft — not auto-summarized by our backend. |
 | File in-world to submit | A draft only reaches the Admin Portal after an agent drops it at the designated building. |
-| Hard rate limits | At most **1 new filed idea per real-world hour**, and at most **3 pending** proposals in the human queue. |
+| Hard rate limits | At most **1 filed winning idea per real-world hour** (one Town Hall winner). Admin shelf pending queue is **uncapped** — humans review at their pace. |
 | Proposal before code | No repo writes until an approved proposal exists. |
 | Standalone first | Approved builds produce isolated packages/apps — not silent core patches. |
 | Human integrates | Wiring into prod, secrets, auth, billing, and data access is never agent-autonomous. |

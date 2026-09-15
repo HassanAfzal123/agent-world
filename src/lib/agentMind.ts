@@ -337,15 +337,30 @@ export async function buildObserve(
     phase === "filing" ||
     (phase === "collaborate" && utcMin >= 33 && utcMin < 41);
 
-  // Outside Town Hall windows: live as neighbors (1:1). Soft reminder only when meeting is near.
+  // Outside Town Hall windows: live as neighbors (1:1) + learn from the wider world.
   if (!inTownHallWindow) {
     priorities.unshift(
-      "DEFAULT LIFE: Prefer 1:1 talk/ask_question with one nearby peer — plans, favors, town gossip, tech/AI ideas from the wider world. " +
-        "Optional rare invite_to_group only if a third craft is truly needed. Do NOT spam procedure lines or force tool groups all day.",
+      "DEFAULT LIFE (most of the hour): Prefer genuine 1:1 talk/ask_question/debate with ONE nearby peer. " +
+        "Bring a real topic from the wider internet — AI agents, humans+AI work, jobs, trust, scams, open-source models, agent societies — " +
+        "share ONE concrete opinion + ask ONE question. Tie it lightly to this town if it fits. " +
+        "Do NOT invite_to_group for Town Hall prep until :33. Do NOT spam procedure lines.",
     );
-    if (phase === "collaborate" && minsToMeeting <= 20 && minsToMeeting > 0) {
+    const worldSeeds = [
+      "Are AI agents replacing busywork or just shifting who does the checking?",
+      "When should a human approve an agent's action — always, never, or by risk?",
+      "Local models vs cloud agents: who should own the memory?",
+      "Agent towns: demo theater or the start of a real online society?",
+      "Which human skills stay valuable next to capable coding/ops agents?",
+      "How do we stay open-minded but careful about fake agents and scams online?",
+      "Should agents build tools for humans outside the town, or only for themselves?",
+    ];
+    const seed = worldSeeds[(hour + agent.name.length) % worldSeeds.length];
+    priorities.unshift(
+      `INTERNET TOPIC (priority): Discuss with a peer — "${seed}". Not meeting logistics. Learn their take; keep a lesson if it changes your mind.`,
+    );
+    if (phase === "collaborate" && minsToMeeting <= 12 && minsToMeeting > 0) {
       priorities.push(
-        `Soft reminder: Town Hall Meeting in ~${minsToMeeting} min at plaza — you may sketch a tool idea in 1:1, but keep living town life until prep (:33).`,
+        `Soft reminder only: Town Hall in ~${minsToMeeting} min (:41). You may sketch a tool idea in 1:1, but keep living/learning until prep (:33).`,
       );
     }
   } else {
@@ -402,7 +417,7 @@ export async function buildObserve(
   } else if (phase === "filing") {
     if (cycle.champion_id && agent.id === cycle.champion_id) {
       priorities.unshift(
-        `PHASE filing — YOU are champion (${cycle.champion_name || "you"}). REQUIRED: walk to library and file_proposal with a DETAILED report for "${cycle.winning_title || "the winner"}" (≥400 chars: problem, design, roles, pitch). Invite peers into a group at the library to co-write if needed.`,
+        `PHASE filing — YOU are champion (${cycle.champion_name || "you"}). You should already be at library (or walk there NOW). REQUIRED: file_proposal with a DETAILED report for "${cycle.winning_title || "the winner"}" (≥400 chars). Filing stays open until :59 UTC.`,
       );
     } else {
       priorities.unshift(
@@ -440,26 +455,23 @@ export async function buildObserve(
     );
   }
   if (nearby.length && !priorities.some((p) => /Reply|Answer|PRIORITY/i.test(p))) {
-    priorities.unshift(
-      "Peers are in talk range — live in this town: make a plan, ask a favor, share news, " +
-        "invite them somewhere, debate a community issue, OR bring a hot internet topic " +
-        "about AI agents / humans working with AI (trust, jobs, agent societies) and ask their take.",
-    );
-    const hotSeeds = [
-      "AI agents replacing busywork vs needing a human in the loop",
-      "personal agent swarms — liberating or lonely?",
-      "when should a human approve an agent's action?",
-      "local models vs cloud agents — who owns the memory?",
-      "are agent towns demos or the start of a real online society?",
-      "which human skills stay valuable next to capable agents?",
-    ];
-    const seed = hotSeeds[(hour + agent.name.length) % hotSeeds.length];
-    priorities.push(
-      `Hot-topic nudge: "${seed}". One concrete opinion + one question; tie it to this town.`,
-    );
+    if (!inTownHallWindow) {
+      priorities.unshift(
+        `Peers in range (${nearby
+          .slice(0, 2)
+          .map((p) => p.name)
+          .join(", ")}): open or continue a 1:1 — internet/AI topic first, not Town Hall logistics.`,
+      );
+    } else {
+      priorities.unshift(
+        "Peers are in talk range — live in this town: make a plan, ask a favor, share news, " +
+          "invite them somewhere, debate a community issue, OR bring a hot internet topic " +
+          "about AI agents / humans working with AI (trust, jobs, agent societies) and ask their take.",
+      );
+    }
   } else if (
     inSight.length &&
-    !priorities.some((p) => /Reply|Answer|appointment|walking/i.test(p))
+    !priorities.some((p) => /Reply|Answer|appointment|walking|INTERNET/i.test(p))
   ) {
     priorities.unshift(
       `Someone interesting is in sight (${inSight

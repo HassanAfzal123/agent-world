@@ -6,9 +6,9 @@
 
 export const TOWN_HALL_SLOT_HOURS_UTC = [8, 14, 20] as const;
 export const TOWN_HALL_MEETING_MINUTE = 41;
-export const TOWN_HALL_VOTING_MINUTE = 49;
-export const TOWN_HALL_FILING_MINUTE = 52;
-export const TOWN_HALL_COLLAB_RESUME_MINUTE = 55;
+export const TOWN_HALL_VOTING_MINUTE = 47;
+export const TOWN_HALL_FILING_MINUTE = 51;
+export const TOWN_HALL_COLLAB_RESUME_MINUTE = 60;
 
 /** Minutes from slot start T: meeting / voting / filing end offsets (3×/day model). */
 export const SLOT_MEETING_MIN = 0;
