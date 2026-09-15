@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { CityApp } from "@/components/CityApp";
 import { ConnectLanding } from "@/components/ConnectLanding";
@@ -134,6 +135,9 @@ export function AppShell({ initialCapacity = null, ...props }: CityProps) {
           >
             Watch
           </button>
+          <Link href="/blog" className="mode-tab">
+            Blog
+          </Link>
         </nav>
       </header>
 

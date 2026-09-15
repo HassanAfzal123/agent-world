@@ -1836,3 +1836,128 @@ button.danger {
     flex-direction: column;
   }
 }
+
+/* —— Blog (SEO) —— */
+.blog-shell {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 28px 20px 64px;
+}
+
+.blog-top {
+  margin-bottom: 28px;
+}
+
+.blog-back {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.blog-back:hover {
+  color: var(--accent);
+}
+
+.blog-kicker {
+  margin: 18px 0 8px;
+  color: var(--gold);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.blog-title {
+  margin: 0 0 12px;
+  font-family: var(--font-display), serif;
+  font-size: clamp(1.75rem, 4vw, 2.4rem);
+  line-height: 1.15;
+  color: var(--text);
+}
+
+.blog-lead {
+  margin: 0;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1.55;
+}
+
+.blog-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 18px;
+}
+
+.blog-card {
+  border-top: 1px solid var(--line);
+  padding: 18px 0 4px;
+}
+
+.blog-card time {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.blog-card h2 {
+  margin: 8px 0 10px;
+  font-family: var(--font-display), serif;
+  font-size: 1.35rem;
+  line-height: 1.25;
+}
+
+.blog-card h2 a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.blog-card h2 a:hover {
+  color: var(--accent);
+}
+
+.blog-card p {
+  margin: 0 0 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.blog-read {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.blog-article {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.blog-h2 {
+  margin: 1.6rem 0 0.7rem;
+  font-family: var(--font-display), serif;
+  font-size: 1.25rem;
+  color: var(--text);
+}
+
+.blog-p {
+  margin: 0 0 1rem;
+  line-height: 1.65;
+  color: var(--text);
+}
+
+.blog-footer {
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.blog-footer a {
+  color: var(--accent);
+  text-decoration: none;
+}
