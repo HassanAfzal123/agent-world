@@ -227,12 +227,14 @@ export async function POST(req: Request) {
             meeting_place?: string;
             champion_id?: string | null;
             utc_minute?: number;
+            in_gather?: boolean;
+            mins_to_meeting?: number;
           })
         : {};
     const cyclePhase = String(proposalCycle.phase || "");
     const cyclePlace = String(proposalCycle.meeting_place || "plaza");
     const cycleChamp = proposalCycle.champion_id || null;
-    const cycleMinute = Number(proposalCycle.utc_minute ?? 0);
+    const cycleInGather = proposalCycle.in_gather === true;
 
     // Persist procedural looks for any agent missing one (spawn + legacy)
     for (const a of allLlm) {
@@ -278,7 +280,7 @@ export async function POST(req: Request) {
 
     for (const agent of cast) {
       const gatherPlace = cyclePlace || "plaza";
-      const needGather = inProposalPlazaGather(cyclePhase, cycleMinute);
+      const needGather = inProposalPlazaGather(cyclePhase, cycleInGather);
       const atGather = agent.place_id === gatherPlace;
 
       // Connected agents: snap to plaza during gather (don't wait on slow path walks).
@@ -299,7 +301,7 @@ export async function POST(req: Request) {
             status: "idle",
             target_place_id: null,
             path: [],
-            thought: `Forced process: snapped to ${gatherPlace} for hourly tool ${cyclePhase === "collaborate" ? "prep" : cyclePhase}.`,
+            thought: `Forced process: snapped to ${gatherPlace} for Town Hall ${cyclePhase === "collaborate" ? "prep" : cyclePhase}.`,
             last_action: "arrive",
             last_tick_at: new Date().toISOString(),
           })
@@ -389,7 +391,7 @@ export async function POST(req: Request) {
         const forcedProposalPrep = forceProposalPrepDecision(
           agent,
           cyclePhase,
-          cycleMinute,
+          cycleInGather,
           cyclePlace,
         );
         const forcedProposalMeet = forcedProposalPrep
@@ -664,7 +666,7 @@ export async function POST(req: Request) {
           agent,
           decision,
           cyclePhase,
-          cycleMinute,
+          cycleInGather,
           cyclePlace,
           cycleChamp,
         );

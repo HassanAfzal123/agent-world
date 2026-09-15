@@ -2157,33 +2157,39 @@ def decide_act(
             )
         priorities.insert(
             0,
-            "HOURLY WINNING-PRODUCT CYCLE: follow observe.proposal_cycle.phase. "
-            "collaborate: invite_to_group, co-write DETAILED compose_proposal, nominate as a group. "
-            "meeting/voting: plaza, vote_idea. "
+            "DAILY TOWN HALL: follow observe.proposal_cycle.phase + mins_to_meeting + meeting_at. "
+            "Once per day (UTC 14:00) — NOT hourly :41. "
+            "collaborate outside gather: live/learn 1:1. "
+            "in_gather/meeting/voting: plaza, invite_to_group, DETAILED compose_proposal, nominate, vote_idea. "
             "filing: group helps; champion file_proposal detailed report at library. No solo one-liners.",
         )
         cycle = observe.get("proposal_cycle") if isinstance(observe.get("proposal_cycle"), dict) else {}
         phase = str(cycle.get("phase") or "")
-        utc_min = int(cycle.get("utc_minute") or 0)
-        mins_to_meeting = (
-            (max(0, 41 - utc_min) if utc_min < 41 else max(0, 60 - utc_min + 41))
-            if phase == "collaborate"
-            else 0
-        )
+        in_gather = bool(cycle.get("in_gather"))
+        try:
+            mins_to_meeting = int(cycle.get("mins_to_meeting") or observe.get("meeting_in_minutes") or 0)
+        except (TypeError, ValueError):
+            mins_to_meeting = 0
+        meeting_at = str(cycle.get("meeting_at") or "UTC 14:00 daily")
         you = observe.get("you") if isinstance(observe.get("you"), dict) else {}
-        if phase == "collaborate":
+        if phase == "collaborate" and not in_gather:
             priorities.insert(
                 0,
-                f"REQUIRED PROCESS — tool meeting in {mins_to_meeting} min (plaza at UTC :41). "
-                "MUST invite_to_group (≥3), co-write DETAILED compose_proposal (≥400 chars), then nominate. "
-                "Solo one-liners are rejected. Empty ballot = wasted hour.",
+                f"Next Town Hall in ~{mins_to_meeting} min ({meeting_at}). "
+                "Outside gather: prefer 1:1 internet/world topics — do NOT prep as if every hour is a meeting.",
             )
-            if mins_to_meeting <= 10:
-                priorities.insert(
-                    0,
-                    "FORCED prep before :41: plaza + tool GROUP + detailed draft. Do not idle sightseeing.",
-                )
-            if not observe.get("my_proposal_draft") and mins_to_meeting <= 20:
+        elif phase == "collaborate" and in_gather:
+            priorities.insert(
+                0,
+                f"REQUIRED PROCESS — Town Hall gather, meeting in {mins_to_meeting} min ({meeting_at}). "
+                "MUST invite_to_group (≥3), co-write DETAILED compose_proposal (≥400 chars), then nominate. "
+                "Solo one-liners are rejected. Empty ballot = wasted daily session.",
+            )
+            priorities.insert(
+                0,
+                "FORCED prep: plaza + tool GROUP + detailed draft. Do not idle sightseeing.",
+            )
+            if not observe.get("my_proposal_draft"):
                 priorities.insert(
                     0,
                     "URGENT: open/join a tool group and co-write a detailed draft (you invent the tool).",

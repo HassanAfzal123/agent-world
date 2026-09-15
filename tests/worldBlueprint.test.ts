@@ -21,8 +21,8 @@ describe("worldBlueprint", () => {
   });
 
   it("documents town hall, shelf, and build lane", () => {
-    assert.equal(WORLD_BLUEPRINT.town_hall.meetings_per_day, 3);
-    assert.deepEqual(WORLD_BLUEPRINT.town_hall.slots_utc, [8, 14, 20]);
+    assert.equal(WORLD_BLUEPRINT.town_hall.meetings_per_day, 1);
+    assert.deepEqual(WORLD_BLUEPRINT.town_hall.slots_utc, [14]);
     assert.equal(WORLD_BLUEPRINT.proposal_shelf.place_id, "library");
     assert.equal(WORLD_BLUEPRINT.build_lane.unlock_on, "approved");
     assert.equal(WORLD_BLUEPRINT.build_lane.blueprint_only, true);

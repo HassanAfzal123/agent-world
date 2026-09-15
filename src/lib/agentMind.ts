@@ -323,27 +323,40 @@ export async function buildObserve(
       String(agent.proposal_draft_body).length >= 120,
   );
   const noms = Array.isArray(cycle.nominations) ? cycle.nominations : [];
-  const utcMin = Number(cycle.utc_minute ?? 0);
-  // Meeting at UTC :41; count down during collaborate.
+  const cycleExtra = cycle as {
+    mins_to_meeting?: number;
+    in_gather?: boolean;
+    meeting_at?: string | null;
+    next_meeting_at?: string | null;
+    slots_utc?: number[];
+    meetings_per_day?: number;
+    schedule_note?: string;
+  };
+  // ALWAYS prefer live cycle fields — never hardcode :41 / hourly math.
+  const fromCycleMins = Number(cycleExtra.mins_to_meeting);
   const minsToMeeting =
-    phase === "collaborate"
-      ? utcMin < 41
-        ? Math.max(0, 41 - utcMin)
-        : Math.max(0, 60 - utcMin + 41)
-      : 0;
+    phase === "collaborate" && Number.isFinite(fromCycleMins)
+      ? Math.max(0, Math.floor(fromCycleMins))
+      : phase === "collaborate"
+        ? 0
+        : 0;
+  const meetingAtLabel = cycleExtra.meeting_at
+    ? String(cycleExtra.meeting_at)
+    : "next daily slot (UTC 14:00)";
+  const inGatherFlag = cycleExtra.in_gather === true;
   const inTownHallWindow =
     phase === "meeting" ||
     phase === "voting" ||
     phase === "filing" ||
-    (phase === "collaborate" && utcMin >= 33 && utcMin < 41);
+    (phase === "collaborate" && inGatherFlag);
 
   // Outside Town Hall windows: live as neighbors (1:1) + learn from the wider world.
   if (!inTownHallWindow) {
     priorities.unshift(
-      "DEFAULT LIFE (most of the hour): Prefer genuine 1:1 talk/ask_question/debate with ONE nearby peer. " +
+      "DEFAULT LIFE (most of the day): Prefer genuine 1:1 talk/ask_question/debate with ONE nearby peer. " +
         "Bring a real topic from the wider internet — AI agents, humans+AI work, jobs, trust, scams, open-source models, agent societies — " +
         "share ONE concrete opinion + ask ONE question. Tie it lightly to this town if it fits. " +
-        "Do NOT invite_to_group for Town Hall prep until :33. Do NOT spam procedure lines.",
+        "Town Hall is ONCE PER DAY — do NOT treat every hour as meeting prep. Do NOT spam procedure lines.",
     );
     const worldSeeds = [
       "Are AI agents replacing busywork or just shifting who does the checking?",
@@ -358,16 +371,24 @@ export async function buildObserve(
     priorities.unshift(
       `INTERNET TOPIC (priority): Discuss with a peer — "${seed}". Not meeting logistics. Learn their take; keep a lesson if it changes your mind.`,
     );
-    if (phase === "collaborate" && minsToMeeting <= 12 && minsToMeeting > 0) {
+    if (phase === "collaborate" && minsToMeeting > 0 && minsToMeeting <= 90) {
       priorities.push(
-        `Soft reminder only: Town Hall in ~${minsToMeeting} min (:41). You may sketch a tool idea in 1:1, but keep living/learning until prep (:33).`,
+        `Soft reminder only: next Town Hall in ~${minsToMeeting} min (${meetingAtLabel}). You may sketch a tool idea in 1:1, but keep living/learning until gather (last ~15 min before meeting).`,
       );
+    } else if (phase === "collaborate" && minsToMeeting > 90) {
+      priorities.push(
+        `Next Town Hall is in ~${minsToMeeting} min (${meetingAtLabel}) — once daily. Ignore any old memory of hourly :41 meetings.`,
+      );
+    }
+    if (cycleExtra.schedule_note) {
+      priorities.push(`SCHEDULE: ${cycleExtra.schedule_note}`);
     }
   } else {
     // HARD PROCEDURE only inside prep/meeting/voting/filing.
     priorities.unshift(
-      `HOURLY WINNING-PRODUCT CYCLE (UTC hour ${cycle.hour_key || "?"}, phase=${phase}, minute=${utcMin}): ` +
-        "Procedure fixed; IDEA CONTENT yours. Must GROUP (invite_to_group), co-write a DETAILED draft (≥400 chars), nominate as a group, vote, then group-help the filer submit a detailed report at library. Meeting at UTC :41.",
+      `DAILY TOWN HALL (session ${cycle.hour_key || "?"}, phase=${phase}): ` +
+        "Procedure fixed; IDEA CONTENT yours. Must GROUP (invite_to_group), co-write a DETAILED draft (≥400 chars), nominate as a group, vote, then group-help the filer submit a detailed report at library. " +
+        `Meeting at ${meetingAtLabel}. Trust observe.proposal_cycle.mins_to_meeting — not an hourly :41 clock.`,
     );
     priorities.unshift(
       "SPEECH: use your own words about the tool. Work it NOW. Never schedule cafe/park meetups for later/Friday. Never say 'lock one next step', 'practical piece', or 'coordination piece'.",
@@ -376,11 +397,11 @@ export async function buildObserve(
 
   if (phase === "collaborate" && inTownHallWindow) {
     priorities.unshift(
-      `PREPARE FOR :41 MEETING — ${minsToMeeting} min left. Do NOT solo-spam one-line nominations. ` +
+      `PREPARE FOR TOWN HALL — ${minsToMeeting} min left (meeting_at=${meetingAtLabel}). Do NOT solo-spam one-line nominations. ` +
         "1) discuss a town tool pain, 2) invite_to_group (≥3 agents), 3) co-write compose_proposal with sections (problem/design/roles/risks/success), 4) nominate only after group turns. Ideas are yours; process is required.",
     );
     priorities.unshift(
-      "FORCED PREP (:33-:40): Be at plaza. Open/join a tool GROUP. Expand the draft together. Empty/solo ballot wastes the hour.",
+      "FORCED PREP (gather window): Be at plaza. Open/join a tool GROUP. Expand the draft together. Empty/solo ballot wastes the daily session.",
     );
     if (nearby.length >= 1 && Number(thread?.turn_count || 0) >= 2) {
       priorities.push(
@@ -394,7 +415,7 @@ export async function buildObserve(
     }
     if (!noms.length) {
       priorities.push(
-        "No nominations on the ballot yet this hour — someone must nominate_idea before voting or the cycle closes empty.",
+        "No nominations on the ballot yet this session — someone must nominate_idea before voting or the cycle closes empty.",
       );
     }
   } else if (phase === "meeting") {
@@ -417,7 +438,7 @@ export async function buildObserve(
   } else if (phase === "filing") {
     if (cycle.champion_id && agent.id === cycle.champion_id) {
       priorities.unshift(
-        `PHASE filing — YOU are champion (${cycle.champion_name || "you"}). You should already be at library (or walk there NOW). REQUIRED: file_proposal with a DETAILED report for "${cycle.winning_title || "the winner"}" (≥400 chars). Filing stays open until :59 UTC.`,
+        `PHASE filing — YOU are champion (${cycle.champion_name || "you"}). You should already be at library (or walk there NOW). REQUIRED: file_proposal with a DETAILED report for "${cycle.winning_title || "the winner"}" (≥400 chars). Filing stays open for this session window.`,
       );
     } else {
       priorities.unshift(
@@ -426,7 +447,7 @@ export async function buildObserve(
     }
   } else if (phase === "closed") {
     priorities.push(
-      "This hour's cycle is closed (filed or empty). Resume normal town life until the next UTC hour.",
+      "This Town Hall session is closed (filed or empty). Resume normal town life until tomorrow's daily meeting (UTC 14:00) — check observe.proposal_cycle.mins_to_meeting.",
     );
   }
 
@@ -527,8 +548,8 @@ export async function buildObserve(
               (cycle as { mins_to_meeting?: number }).mins_to_meeting,
             );
             if (Number.isFinite(fromCycle)) return Math.max(0, fromCycle);
-            const m = Number(cycle.utc_minute ?? 0);
-            return m < 41 ? Math.max(0, 41 - m) : Math.max(0, 60 - m + 41);
+            // No legacy :41 fallback — if DB omit mins, treat as unknown (0 soft).
+            return 0;
           })()
         : 0,
     my_proposal_draft: agent.proposal_draft_title

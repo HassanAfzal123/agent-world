@@ -247,28 +247,26 @@ export function forceEventGatherDecision(
   };
 }
 
-/** True during forced plaza gather windows (all claimed agents). */
+/** True during forced plaza gather windows (all claimed agents).
+ * Prefer live `inGather` from ensure_proposal_cycle — never hardcode :33/:41. */
 export function inProposalPlazaGather(
   phase: string | null | undefined,
-  utcMinute: number | null | undefined,
+  inGather?: boolean | null,
 ): boolean {
+  if (inGather === true) return true;
   if (phase === "meeting" || phase === "voting") return true;
-  const m = Number(utcMinute ?? 0);
-  // Prep window: :33-:40 before :41 meeting
-  if (phase === "collaborate" && m >= 33 && m < 41) return true;
   return false;
 }
 
-/** Collaborate :33-:40: every agent walks to plaza for pre-meeting prep. */
+/** Prep gather window: every agent walks to plaza before the daily meeting. */
 export function forceProposalPrepDecision(
   agent: Agent,
   phase: string | null | undefined,
-  utcMinute: number | null | undefined,
+  inGather: boolean | null | undefined,
   meetingPlace: string | null | undefined,
 ): AgentDecision | null {
   if (phase !== "collaborate") return null;
-  const m = Number(utcMinute ?? 0);
-  if (m < 33 || m >= 41) return null;
+  if (!inGather) return null;
   const place = meetingPlace || "plaza";
   if (agent.place_id === place) return null;
   if (
@@ -281,13 +279,13 @@ export function forceProposalPrepDecision(
     action: "walk",
     target_place: place,
     thought:
-      "Forced process: pre-meeting prep — every agent to plaza before :41 UTC. Form a GROUP, co-write a detailed tool draft (ideas still ours).",
+      "Forced process: pre-meeting prep — every agent to plaza before daily Town Hall. Form a GROUP, co-write a detailed tool draft (ideas still ours).",
     utterance: null,
     item: null,
   };
 }
 
-/** Hourly winning-product meeting / voting: every agent to plaza (redirect mid-walk). */
+/** Town Hall meeting / voting: every agent to plaza (redirect mid-walk). */
 export function forceProposalMeetingDecision(
   agent: Agent,
   phase: string | null | undefined,
@@ -306,7 +304,7 @@ export function forceProposalMeetingDecision(
   return {
     action: "walk",
     target_place: place,
-    thought: `Forced process: every agent reports to ${place} for hourly tool ${phase}. Decisions (ideas/votes) stay yours.`,
+    thought: `Forced process: every agent reports to ${place} for Town Hall ${phase}. Decisions (ideas/votes) stay yours.`,
     utterance: null,
     item: null,
   };
@@ -320,7 +318,7 @@ export function clampToProposalGather(
   agent: Agent,
   decision: AgentDecision,
   phase: string | null | undefined,
-  utcMinute: number | null | undefined,
+  inGather: boolean | null | undefined,
   meetingPlace: string | null | undefined,
   championId?: string | null,
 ): AgentDecision {
@@ -362,7 +360,7 @@ export function clampToProposalGather(
     return decision;
   }
 
-  if (!inProposalPlazaGather(phase, utcMinute)) return decision;
+  if (!inProposalPlazaGather(phase, inGather)) return decision;
   const place = meetingPlace || "plaza";
   const label =
     phase === "collaborate" ? "prep" : String(phase || "meeting");
@@ -382,7 +380,7 @@ export function clampToProposalGather(
         target_agent: null,
         item: null,
         utterance: null,
-        thought: `Forced process: stay at ${place} for hourly tool ${label} — invite_to_group, co-write a DETAILED draft, nominate as a group; do not leave.`,
+        thought: `Forced process: stay at ${place} for Town Hall ${label} — invite_to_group, co-write a DETAILED draft, nominate as a group; do not leave.`,
       };
     }
     return decision;
@@ -403,7 +401,7 @@ export function clampToProposalGather(
     target_agent: null,
     item: null,
     utterance: null,
-    thought: `Forced process: every agent reports to ${place} for hourly tool ${label}.`,
+    thought: `Forced process: every agent reports to ${place} for Town Hall ${label}.`,
   };
 }
 

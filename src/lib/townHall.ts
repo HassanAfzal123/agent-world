@@ -1,20 +1,21 @@
 /** Town Hall Meeting cycle helpers.
- * Product intent: 3 meetings/day (UTC 08 / 14 / 20) — see WORLD_BLUEPRINT +
- * supabase/migrations/20260915_town_hall_three_daily_force_start.sql.
- * Legacy hourly :41 windows remain as fallback until that migration is applied.
+ * Product: 1 meeting/day at UTC 14:00 — see
+ * supabase/migrations/20260915_town_hall_one_daily.sql.
+ * Always prefer DB mins_to_meeting / in_gather / meeting_at over any clock math.
  */
 
-export const TOWN_HALL_SLOT_HOURS_UTC = [8, 14, 20] as const;
+export const TOWN_HALL_SLOT_HOURS_UTC = [14] as const;
+/** @deprecated Legacy hourly minute — do not use for agent priorities. */
 export const TOWN_HALL_MEETING_MINUTE = 41;
 export const TOWN_HALL_VOTING_MINUTE = 47;
 export const TOWN_HALL_FILING_MINUTE = 51;
 export const TOWN_HALL_COLLAB_RESUME_MINUTE = 60;
 
-/** Minutes from slot start T: meeting / voting / filing end offsets (3×/day model). */
+/** Minutes from slot start T: meeting / voting / filing end offsets (daily model). */
 export const SLOT_MEETING_MIN = 0;
 export const SLOT_VOTING_MIN = 12;
 export const SLOT_FILING_MIN = 18;
-export const SLOT_END_MIN = 28;
+export const SLOT_END_MIN = 40;
 
 export type TownHallNomination = {
   id: string;
@@ -39,13 +40,16 @@ export type TownHallCycle = {
   winning_title?: string | null;
   winning_summary?: string | null;
   filed_proposal_id?: string | null;
-  /** From DB ensure_proposal_cycle — preferred over legacy :41 math. */
+  /** From DB ensure_proposal_cycle — preferred over any clock math. */
   mins_to_meeting?: number | null;
   forced?: boolean;
   in_gather?: boolean;
   meeting_at?: string | null;
   next_meeting_at?: string | null;
   session_offset_min?: number | null;
+  meetings_per_day?: number | null;
+  schedule_note?: string | null;
+  slots_utc?: number[] | null;
 };
 
 export type TownHallPhase =
@@ -135,7 +139,7 @@ export function minutesLeftInPhase(
   return null;
 }
 
-/** Prefer DB mins_to_meeting; fall back to legacy hourly :41. */
+/** Prefer DB mins_to_meeting; fall back to daily slot countdown (not :41). */
 export function resolveMinsToMeeting(cycle: TownHallCycle): number {
   if (
     cycle.mins_to_meeting != null &&
@@ -143,7 +147,13 @@ export function resolveMinsToMeeting(cycle: TownHallCycle): number {
   ) {
     return Math.max(0, Math.floor(cycle.mins_to_meeting));
   }
-  return minutesToNextMeeting(cycle.utc_minute);
+  if (cycle.meeting_at) {
+    const t = Date.parse(cycle.meeting_at);
+    if (Number.isFinite(t)) {
+      return Math.max(0, Math.ceil((t - Date.now()) / 60_000));
+    }
+  }
+  return minutesToNextSlotMeeting();
 }
 
 export function phaseLabel(phase: TownHallPhase): string {
@@ -170,9 +180,9 @@ export function phaseBlurb(phase: TownHallPhase): string {
     case "filing":
       return "Winner is highlighted — champion files it to the Proposal Shelf.";
     case "closed":
-      return "This hour’s Town Hall has closed.";
+      return "This Town Hall session has closed.";
     default:
-      return "Agents are shaping tool ideas before the next Town Hall Meeting.";
+      return "Agents are living in town — next Town Hall is once daily at UTC 14:00.";
   }
 }
 

@@ -96,7 +96,7 @@ describe("townHall helpers", () => {
     assert.ok(m > 0 && m <= 60);
   });
 
-  it("3x daily slot countdown is non-negative", () => {
+  it("daily slot countdown is non-negative", () => {
     assert.ok(minutesToNextSlotMeeting(new Date()) >= 0);
   });
 
@@ -104,7 +104,7 @@ describe("townHall helpers", () => {
     assert.equal(phaseFromSlotElapsed(5), "meeting");
     assert.equal(phaseFromSlotElapsed(14), "voting");
     assert.equal(phaseFromSlotElapsed(20), "filing");
-    assert.equal(phaseFromSlotElapsed(30), "closed");
+    assert.equal(phaseFromSlotElapsed(45), "closed");
   });
 
   it("parses spectator cycle payloads", () => {

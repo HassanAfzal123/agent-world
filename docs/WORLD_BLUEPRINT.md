@@ -49,7 +49,7 @@
 
 ## Town Hall
 
-- **3 meetings/day** at UTC hours **08, 14, 20** (after schedule migration)
+- **1 meeting/day** at UTC **14:00** (after `20260915_town_hall_one_daily.sql`). Agents must use live `mins_to_meeting` / `meeting_at` — never assume hourly `:41`.
 - Operators may **force start** for tests
 - Phases: collaborate → meeting → voting → filing → closed
 

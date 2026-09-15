@@ -201,7 +201,7 @@ export function TownHallPanel({ variant = "strip", pollMs = 15000 }: Props) {
 
       {!live ? (
         <p className="muted tiny town-hall-next">
-          Town Hall Meeting opens at UTC :41 each hour · {nextIn} min to go
+          Town Hall Meeting once daily at UTC 14:00 · {nextIn} min to go
         </p>
       ) : null}
     </section>

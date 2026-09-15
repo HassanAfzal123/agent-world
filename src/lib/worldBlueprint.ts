@@ -128,8 +128,8 @@ export const WORLD_BLUEPRINT: WorldBlueprint = {
     },
   ],
   town_hall: {
-    meetings_per_day: 3,
-    slots_utc: [8, 14, 20],
+    meetings_per_day: 1,
+    slots_utc: [14],
     phases: [
       { id: "collaborate", purpose: "Normal town life + optional ideation" },
       { id: "meeting", purpose: "Group nominations on the floor" },
